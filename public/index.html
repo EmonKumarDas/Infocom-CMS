@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Team Task Management</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="logo"></div>
+                <h2>TaskFlow</h2>
+            </div>
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" data-target="dashboard-section">
+                    <span class="icon">📊</span> Dashboard
+                </a>
+                <h3 style="padding: 15px 16px 5px; font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Products</h3>
+                <a href="#" class="nav-item" data-target="manage-products-section">
+                    <span class="icon">⚙️</span> Manage Products
+                </a>
+                <a href="#" class="nav-item" data-target="product-receive-section">
+                    <span class="icon">📥</span> Product Receive
+                </a>
+                <a href="#" class="nav-item" data-target="product-invest-section">
+                    <span class="icon">📤</span> Product Invest
+                </a>
+                <h3 style="padding: 15px 16px 5px; font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Reports</h3>
+                <a href="#" class="nav-item" data-target="monthly-report-section">
+                    <span class="icon">📅</span> Monthly Report
+                </a>
+                <h3 style="padding: 15px 16px 5px; font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Task Flow</h3>
+                <a href="#" class="nav-item" data-target="team-task-section">
+                    <span class="icon">📋</span> Team Task
+                </a>
+                <a href="#" class="nav-item" data-target="add-employee-section">
+                    <span class="icon">👤</span> Add Employee
+                </a>
+                <a href="#" class="nav-item" data-target="employee-list-section">
+                    <span class="icon">👥</span> Employee List
+                </a>
+                <a href="#" class="nav-item" data-target="our-clients-section">
+                    <span class="icon">🏢</span> Our Clients
+                </a>
+                <a href="#" class="nav-item" data-target="add-location-section">
+                    <span class="icon">📍</span> Add Location
+                </a>
+                <a href="#" class="nav-item" data-target="export-section">
+                    <span class="icon">📄</span> Export Data
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content area -->
+        <main class="content-area">
+            <header>
+                <div style="display:flex; align-items:center; gap: 15px;">
+                    <button id="mobileMenuBtn" class="mobile-only-btn" style="background:none; border:none; color:white; font-size:24px; cursor:pointer; display:none;" onclick="toggleSidebar()">☰</button>
+                    <h1 id="page-title">Dashboard</h1>
+                </div>
+                <div class="user-profile">
+                    <img src="https://ui-avatars.com/api/?name=Admin&background=6c5ce7&color=fff" alt="Admin">
+                </div>
+            </header>
+
+            <div class="sections-container">
+                <!-- Dashboard Section -->
+                <section id="dashboard-section" class="app-section active">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 20px;">
+                        <div class="card glass-card">
+                            <h3 style="margin-bottom: 10px; font-size: 14px; border:none; padding:0; color:var(--text-muted)">Total Real-time Stock</h3>
+                            <div id="dashTotalStock" style="font-size: 32px; font-weight: 700; color: var(--primary);">0</div>
+                        </div>
+                        <div class="card glass-card">
+                            <h3 style="margin-bottom: 10px; font-size: 14px; border:none; padding:0; color:var(--text-muted)">Received This Month</h3>
+                            <div id="dashTotalRecv" style="font-size: 32px; font-weight: 700; color: var(--success);">0</div>
+                        </div>
+                        <div class="card glass-card">
+                            <h3 style="margin-bottom: 10px; font-size: 14px; border:none; padding:0; color:var(--text-muted)">Invested This Month</h3>
+                            <div id="dashTotalInv" style="font-size: 32px; font-weight: 700; color: #f59e0b;">0</div>
+                        </div>
+                    </div>
+                    
+                    <div class="grid-form">
+                        <div class="card glass-card grid-full">
+                            <h3>Low Stock Alert (< 10 units)</h3>
+                            <div class="table-responsive">
+                                <table class="styled-table" id="lowStockTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Product</th>
+                                            <th>Variant/Type</th>
+                                            <th>Remaining Stock</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- alerts here -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Manage Products Section -->
+                <section id="manage-products-section" class="app-section">
+                    <div class="card glass-card">
+                        <h3>Add New Product Category</h3>
+                        <form id="addProductForm" class="single-form">
+                            <input type="hidden" id="newProductId">
+                            <div class="form-group">
+                                <label>Product Name</label>
+                                <input type="text" id="newProductName" placeholder="e.g. Router" required>
+                                <small style="display:block; margin-top:8px;">Note: Currently, creating new products gives them standard tracking. Specialized dynamic fields require hardcoding currently.</small>
+                            </div>
+                            <div class="form-actions" style="justify-content: flex-start;">
+                                <button type="submit" class="btn primary-btn" id="productSubmitBtn">Save Product</button>
+                                <button type="button" class="btn btn-secondary" id="productCancelBtn" style="display:none; margin-left:10px;">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                    
+                    <div class="card glass-card mt-20">
+                        <h3>Available Products Dictionary</h3>
+                        <ul class="employee-list" id="productsListDisplay"></ul>
+                    </div>
+                </section>
+
+                <!-- Product Receive Section -->
+                <section id="product-receive-section" class="app-section">
+                    <div class="card glass-card">
+                        <h3>Receive Product from Dhaka Office</h3>
+                        <form id="receiveForm" class="grid-form">
+                            <input type="hidden" id="receiveId">
+                            <div class="form-group grid-full">
+                                <label>Date</label>
+                                <input type="date" id="recvDate" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Product Name</label>
+                                <select id="recvProduct" required onchange="handleProductFormChange('recv')">
+                                    <option value="">Select Product...</option>
+                                    <!-- populated via JS -->
+                                </select>
+                            </div>
+                            
+                            <!-- Dynamic Container -->
+                            <div id="recvDynamicFields" class="grid-form grid-full" style="gap:20px; padding: 15px; background: rgba(0,0,0,0.1); border-radius: 8px; margin-bottom: 15px; display:none;">
+                                <!-- injected dynamically -->
+                            </div>
+
+                            <div class="form-group">
+                                <label>Received Quantity</label>
+                                <input type="number" id="recvQty" required min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>Source Office</label>
+                                <input type="text" id="recvSource" value="Dhaka" readonly style="color:var(--text-muted);">
+                            </div>
+                            <div class="form-group grid-full">
+                                <label>Notes</label>
+                                <input type="text" id="recvNotes" placeholder="Optional notes...">
+                            </div>
+                            <div class="form-group grid-full form-actions" style="justify-content: flex-start; gap: 10px;">
+                                <button type="submit" class="btn primary-btn" id="recvSubmitBtn">Save Entry</button>
+                                <button type="button" class="btn btn-secondary" id="recvCancelBtn" style="display:none;">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="card glass-card mt-20">
+                        <h3>Recent Receives</h3>
+                        <div class="table-responsive">
+                            <table class="styled-table" id="receivesTable">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Product</th>
+                                        <th>Variant/Extra</th>
+                                        <th>Qty</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Product Invest Section -->
+                <section id="product-invest-section" class="app-section">
+                    <div class="card glass-card">
+                        <h3>Invest Product (CTG/CUET)</h3>
+                        <div id="stockWarning" style="color:var(--danger); font-size:14px; margin-bottom:15px; display:none;"></div>
+                        <form id="investForm" class="grid-form">
+                            <input type="hidden" id="investId">
+                            <div class="form-group grid-full">
+                                <label>Date</label>
+                                <input type="date" id="invDate" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Product Name</label>
+                                <select id="invProduct" required onchange="handleProductFormChange('inv')">
+                                    <option value="">Select Product...</option>
+                                    <!-- populated via JS -->
+                                </select>
+                            </div>
+                            
+                            <!-- Dynamic Container -->
+                            <div id="invDynamicFields" class="grid-form grid-full" style="gap:20px; padding: 15px; background: rgba(0,0,0,0.1); border-radius: 8px; margin-bottom: 15px; display:none;">
+                                <!-- injected dynamically -->
+                            </div>
+
+                            <div class="form-group">
+                                <label>Invested Quantity</label>
+                                <input type="number" id="invQty" required min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>Office Location</label>
+                                <select id="invOffice" required>
+                                    <option value="CTG">CTG</option>
+                                    <option value="CUET">CUET</option>
+                                </select>
+                            </div>
+                            <div class="form-group grid-full">
+                                <label>Notes</label>
+                                <input type="text" id="invNotes" placeholder="Optional notes...">
+                            </div>
+                            <div class="form-group grid-full form-actions" style="justify-content: flex-start; gap: 10px;">
+                                <button type="submit" class="btn primary-btn" id="invSubmitBtn" style="background:#f59e0b;">Invest Product</button>
+                                <button type="button" class="btn btn-secondary" id="invCancelBtn" style="display:none;">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="card glass-card mt-20">
+                        <h3>Recent Investments</h3>
+                        <div class="table-responsive">
+                            <table class="styled-table" id="investsTable">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Product</th>
+                                        <th>Variant/Extra</th>
+                                        <th>Qty</th>
+                                        <th>Office</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Monthly Report Section -->
+                <section id="monthly-report-section" class="app-section">
+                    <div class="card glass-card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h3>Monthly Inventory Report</h3>
+                            <div class="filters" style="display: flex; gap: 10px;">
+                                <input type="month" id="reportMonthFilter" class="form-control" style="padding: 6px; border-radius: 6px;" onchange="loadReportData()">
+                                <button class="btn primary-btn" style="padding: 6px 12px; font-size:12px;" onclick="printReport()">Print / PDF</button>
+                                <button class="btn btn-secondary" style="padding: 6px 12px; font-size:12px; background:rgba(16,185,129,0.2); color:#10b981;" onclick="exportExcelReport()">Export Excel</button>
+                            </div>
+                        </div>
+                        <div class="table-responsive" id="printableReport">
+                            <h2 style="display:none;" id="printRepTitle">Inventory Report</h2>
+                            <table class="styled-table" id="reportTable">
+                                <thead>
+                                    <tr>
+                                        <th>Product Name</th>
+                                        <th>Type/Variation</th>
+                                        <th>Total Received</th>
+                                        <th>Used (CTG)</th>
+                                        <th>Used (CUET)</th>
+                                        <th>Remaining Stock</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- report data here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Team Task Section -->
+                <section id="team-task-section" class="app-section">
+                    <div class="card glass-card">
+                        <h3>Create New Task</h3>
+                        <form id="taskForm" class="grid-form">
+                            <input type="hidden" id="taskId">
+                            <div class="form-group grid-full">
+                                <label>Assign Employees (Select Multiple)</label>
+                                <select id="taskEmployees" multiple required>
+                                    <!-- Dynamic Options here -->
+                                </select>
+                                <small>Hold Ctrl (Windows) or Cmd (Mac) to select multiple</small>
+                            </div>
+                            <div class="form-group">
+                                <label>Task Description</label>
+                                <input type="text" id="taskDesc" placeholder="e.g. Power plant link down" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Location</label>
+                                <select id="taskLocation" required>
+                                    <!-- Dynamic Options here -->
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Date</label>
+                                <input type="date" id="taskDate" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Completed?</label>
+                                <select id="taskCompleted">
+                                    <option value="0">No</option>
+                                    <option value="1">Yes</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Start Time</label>
+                                <input type="time" id="taskStartTime" required>
+                            </div>
+                            <div class="form-group">
+                                <label>End Time</label>
+                                <input type="time" id="taskEndTime" required>
+                            </div>
+                            <div class="form-group grid-full form-actions">
+                                <button type="button" class="btn btn-secondary" id="taskCancelBtn" style="display:none; margin-right:10px;">Cancel</button>
+                                <button type="submit" class="btn primary-btn" id="taskSubmitBtn">Assign Task</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div class="card glass-card mt-20">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h3 style="margin: 0;">Recent Tasks</h3>
+                            <div class="filters" style="display: flex; gap: 10px;">
+                                <select id="filterMonth" class="form-control" style="padding: 6px; border-radius: 6px;">
+                                    <option value="">All Months</option>
+                                    <option value="01">January</option>
+                                    <option value="02">February</option>
+                                    <option value="03">March</option>
+                                    <option value="04">April</option>
+                                    <option value="05">May</option>
+                                    <option value="06">June</option>
+                                    <option value="07">July</option>
+                                    <option value="08">August</option>
+                                    <option value="09">September</option>
+                                    <option value="10">October</option>
+                                    <option value="11">November</option>
+                                    <option value="12">December</option>
+                                </select>
+                                <select id="filterYear" class="form-control" style="padding: 6px; border-radius: 6px;">
+                                    <option value="">All Years</option>
+                                    <option value="2024">2024</option>
+                                    <option value="2025">2025</option>
+                                    <option value="2026" selected>2026</option>
+                                    <option value="2027">2027</option>
+                                    <option value="2028">2028</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="styled-table" id="tasksTable">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Employees</th>
+                                        <th>Task</th>
+                                        <th>Location</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Tasks will appear here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Add Employee Section -->
+                <section id="add-employee-section" class="app-section">
+                    <div class="card glass-card">
+                        <h3>Add New Employee</h3>
+                        <form id="employeeForm" class="single-form">
+                            <input type="hidden" id="employeeId">
+                            <div class="form-group">
+                                <label>Employee Name</label>
+                                <input type="text" id="employeeName" placeholder="e.g. Meheraj" required>
+                            </div>
+                            <div style="display: flex;">
+                                <button type="button" class="btn btn-secondary" id="employeeCancelBtn" style="display:none; margin-right:10px;">Cancel</button>
+                                <button type="submit" class="btn primary-btn" id="employeeSubmitBtn">Save Employee</button>
+                            </div>
+                        </form>
+                    </div>
+                </section>
+
+                <!-- Employee List Section -->
+                <section id="employee-list-section" class="app-section">
+                    <div class="card glass-card">
+                        <h3>Employee Directory</h3>
+                        <ul class="employee-list" id="employeeListDisplay">
+                            <!-- Dynamic items -->
+                        </ul>
+                    </div>
+                </section>
+
+                <!-- Add Location Section -->
+                <section id="add-location-section" class="app-section">
+                    <div class="card glass-card">
+                        <h3>Add New Location</h3>
+                        <form id="locationForm" class="grid-form">
+                            <input type="hidden" id="locationId">
+                            <div class="form-group">
+                                <label>Location Name</label>
+                                <input type="text" id="locationName" placeholder="e.g. Powerplant" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Amount (Transport Fare)</label>
+                                <input type="number" id="locationAmount" placeholder="e.g. 70" required>
+                            </div>
+                            <div class="form-group grid-full form-actions">
+                                <button type="button" class="btn btn-secondary" id="locationCancelBtn" style="display:none; margin-right:10px;">Cancel</button>
+                                <button type="submit" class="btn primary-btn" id="locationSubmitBtn">Save Location</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div class="card glass-card mt-20">
+                        <h3>Locations List</h3>
+                        <ul class="employee-list" id="locationListDisplay">
+                            <!-- Dynamic items -->
+                        </ul>
+                    </div>
+                </section>
+
+                <!-- Export Data Section -->
+                <section id="export-section" class="app-section">
+                    <div class="card glass-card">
+                        <h3>Export Conveyance Bill</h3>
+                        <form id="exportConveyanceForm" class="grid-form">
+                            <div class="form-group grid-full">
+                                <label>Target Month</label>
+                                <input type="month" id="exportMonthConveyance" required>
+                            </div>
+                            <div class="form-group grid-full">
+                                <label>Excel Template File (.xlsx)</label>
+                                <input type="file" id="exportFileConveyance" accept=".xlsx" required>
+                            </div>
+                            <div class="form-group grid-full form-actions">
+                                <button type="submit" class="btn primary-btn" style="background:#10b981;">Generate Conveyance Bill</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div class="card glass-card mt-20">
+                        <h3>Export Food Bill (Per User)</h3>
+                        <form id="exportFoodForm" class="grid-form">
+                            <div class="form-group">
+                                <label>Select Employee</label>
+                                <select id="exportEmployeeFood" required>
+                                    <!-- Dynamic Options here -->
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Target Month</label>
+                                <input type="month" id="exportMonthFood" required>
+                            </div>
+                            <div class="form-group grid-full">
+                                <label>Excel Template File (.xlsx)</label>
+                                <input type="file" id="exportFileFood" accept=".xlsx" required>
+                            </div>
+                            <div class="form-group grid-full form-actions">
+                                <button type="submit" class="btn primary-btn" style="background:#10b981;">Generate Food Bill</button>
+                            </div>
+                        </form>
+                    </div>
+                </section>
+
+                <!-- Our Clients Section -->
+                <section id="our-clients-section" class="app-section">
+                    <div class="card glass-card">
+                        <h3>Add New Client</h3>
+                        <form id="clientForm" class="grid-form">
+                            <input type="hidden" id="clientId">
+                            <div class="form-group grid-full">
+                                <label>Client Name</label>
+                                <input type="text" id="clientName">
+                            </div>
+                            <div class="form-group">
+                                <label>Client Type</label>
+                                <select id="clientType">
+                                    <option value="Dedicated">Dedicated</option>
+                                    <option value="Shared">Shared</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Location</label>
+                                <input type="text" id="clientLocation">
+                            </div>
+                            <div class="form-group">
+                                <label>AKTL Assign Router</label>
+                                <input type="text" id="clientAktlRouter">
+                            </div>
+                            <div class="form-group">
+                                <label>Client ID</label>
+                                <input type="text" id="clientIdentifier">
+                            </div>
+                            <div class="form-group">
+                                <label>BW Type</label>
+                                <input type="text" id="clientBwType">
+                            </div>
+                            <div class="form-group">
+                                <label>Sales KAM</label>
+                                <input type="text" id="clientSalesKam">
+                            </div>
+                            <div class="form-group">
+                                <label>Sales BW</label>
+                                <input type="text" id="clientSalesBw">
+                            </div>
+                            <div class="form-group">
+                                <label>Total NTTN</label>
+                                <input type="text" id="clientTotalNttn">
+                            </div>
+                            <div class="form-group">
+                                <label>AKTL NTTN</label>
+                                <input type="text" id="clientAktlNttn">
+                            </div>
+                            <div class="form-group">
+                                <label>FGL NTTN</label>
+                                <input type="text" id="clientFglNttn">
+                            </div>
+                            <div class="form-group">
+                                <label>SCL NTTN</label>
+                                <input type="text" id="clientSclNttn">
+                            </div>
+                            <div class="form-group">
+                                <label>daTomato NTTN</label>
+                                <input type="text" id="clientDatomatoNttn">
+                            </div>
+                            <div class="form-group">
+                                <label>Last Mile Connected POP/Device</label>
+                                <input type="text" id="clientLastMile">
+                            </div>
+                            <div class="form-group">
+                                <label>Client End Device</label>
+                                <input type="text" id="clientEndDevice">
+                            </div>
+                            <div class="form-group">
+                                <label>NTTN Link ID</label>
+                                <input type="text" id="clientNttnLinkId">
+                            </div>
+                            <div class="form-group">
+                                <label>Handover Date</label>
+                                <input type="date" id="clientHandoverDate">
+                            </div>
+                            <div class="form-group">
+                                <label>Discontinue Date</label>
+                                <input type="date" id="clientDiscontinueDate">
+                            </div>
+                            <div class="form-group">
+                                <label>VLAN</label>
+                                <input type="text" id="clientVlan">
+                            </div>
+                            <div class="form-group">
+                                <label>ASN</label>
+                                <input type="text" id="clientAsn">
+                            </div>
+                            <div class="form-group">
+                                <label>IP/PPPoE User Information</label>
+                                <input type="text" id="clientIpUserInfo">
+                            </div>
+                            <div class="form-group">
+                                <label>LAN IP</label>
+                                <input type="text" id="clientLanIp">
+                            </div>
+                            <div class="form-group">
+                                <label>MRTG</label>
+                                <input type="text" id="clientMrtg">
+                            </div>
+                            <div class="form-group">
+                                <label>Contact Name & Number</label>
+                                <input type="text" id="clientContact">
+                            </div>
+                            <div class="form-group">
+                                <label>Email Address</label>
+                                <input type="email" id="clientEmail">
+                            </div>
+                            <div class="form-group grid-full">
+                                <label>Address Details</label>
+                                <input type="text" id="clientAddress">
+                            </div>
+                            <div class="form-group grid-full">
+                                <label>Router Login Info</label>
+                                <input type="text" id="clientRouterLogin">
+                            </div>
+                            <div class="form-group grid-full">
+                                <label>Remarks</label>
+                                <input type="text" id="clientRemarks">
+                            </div>
+                            <div class="form-group grid-full form-actions" style="justify-content: flex-start; gap: 10px;">
+                                <button type="submit" class="btn primary-btn" id="clientSubmitBtn">Save Client</button>
+                                <button type="button" class="btn btn-secondary" id="clientCancelBtn" style="display:none;">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div class="card glass-card mt-20">
+                        <h3>Bulk Upload Clients (Excel)</h3>
+                        <form id="clientUploadForm" class="grid-form">
+                            <div class="form-group grid-full">
+                                <label>Upload Excel File (First Row Must Match Database Column Name headers)</label>
+                                <input type="file" id="clientExcelFile" accept=".xlsx" required>
+                            </div>
+                            <div class="form-group grid-full form-actions">
+                                <button type="submit" class="btn btn-secondary">Upload Excel File</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div class="card glass-card mt-20">
+                        <h3>Client Directory</h3>
+                        <div class="table-responsive">
+                            <table class="styled-table" id="clientsTable">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Type</th>
+                                        <th>Location</th>
+                                        <th>Contact</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Clients here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="toast">Success!</div>
+
+    <script src="app.js"></script>
+</body>
+</html>
