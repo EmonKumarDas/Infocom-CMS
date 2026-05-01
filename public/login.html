@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Infocom CMS</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            margin: 0;
+            font-family: 'Inter', sans-serif;
+        }
+        .login-container {
+            width: 100%;
+            max-width: 400px;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            color: white;
+        }
+        .login-container h2 {
+            margin: 0 0 10px;
+            font-size: 28px;
+            font-weight: 700;
+            text-align: center;
+            background: linear-gradient(135deg, #a78bfa 0%, #ec4899 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .login-container p.subtitle {
+            text-align: center;
+            color: #94a3b8;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #cbd5e1;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: white;
+            font-size: 15px;
+            transition: all 0.3s ease;
+            box-sizing: border-box;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #8b5cf6;
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.3);
+        }
+        .btn-submit {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #8b5cf6 0%, #d946ef 100%);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px -10px #d946ef;
+        }
+        #errorMsg {
+            color: #ef4444;
+            font-size: 14px;
+            text-align: center;
+            margin-bottom: 15px;
+            display: none;
+        }
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="login-container" id="loginBox">
+        <h2>Welcome Back</h2>
+        <p class="subtitle">Sign in to your Infocom CMS account</p>
+        
+        <div id="errorMsg"></div>
+
+        <form id="loginForm">
+            <div class="form-group">
+                <label>User ID</label>
+                <input type="text" id="loginId" placeholder="Enter User ID" required>
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="loginPassword" placeholder="Enter Password" required>
+            </div>
+            <button type="submit" class="btn-submit">Sign In</button>
+        </form>
+    </div>
+
+    <div class="login-container hidden" id="initBox">
+        <h2>System Setup</h2>
+        <p class="subtitle">Create the Super Admin account</p>
+        
+        <div id="initErrorMsg" style="color: #ef4444; font-size: 14px; text-align: center; margin-bottom: 15px; display: none;"></div>
+
+        <form id="initForm">
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="initUsername" placeholder="e.g. Admin" required>
+            </div>
+            <div class="form-group">
+                <label>User ID</label>
+                <input type="text" id="initId" placeholder="e.g. admin123" required>
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="initPassword" placeholder="Create strong password" required>
+            </div>
+            <button type="submit" class="btn-submit">Initialize System</button>
+        </form>
+    </div>
+
+    <script>
+        const API_URL = '/api';
+
+        async function checkInit() {
+            try {
+                const res = await fetch(`${API_URL}/auth/check`);
+                const data = await res.json();
+                if (!data.initialized) {
+                    document.getElementById('loginBox').classList.add('hidden');
+                    document.getElementById('initBox').classList.remove('hidden');
+                }
+            } catch (e) {
+                console.error("Could not check init status", e);
+            }
+        }
+
+        document.getElementById('initForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('initUsername').value;
+            const user_id = document.getElementById('initId').value;
+            const password = document.getElementById('initPassword').value;
+
+            try {
+                const res = await fetch(`${API_URL}/auth/init`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, user_id, password })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    alert('Admin created successfully! Please log in.');
+                    window.location.reload();
+                } else {
+                    const err = document.getElementById('initErrorMsg');
+                    err.textContent = data.error || 'Setup failed';
+                    err.style.display = 'block';
+                }
+            } catch(err) {
+                console.error(err);
+            }
+        });
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const user_id = document.getElementById('loginId').value;
+            const password = document.getElementById('loginPassword').value;
+
+            try {
+                const res = await fetch(`${API_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id, password })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('role', data.role);
+                    localStorage.setItem('username', data.username);
+                    localStorage.setItem('permissions', data.permissions || '[]');
+                    window.location.href = 'index.html';
+                } else {
+                    const err = document.getElementById('errorMsg');
+                    err.textContent = data.error || 'Login failed';
+                    err.style.display = 'block';
+                }
+            } catch(err) {
+                console.error(err);
+            }
+        });
+
+        // Check if we need to show init screen
+        checkInit();
+    </script>
+</body>
+</html>

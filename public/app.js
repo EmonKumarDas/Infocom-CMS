@@ -1,5 +1,107 @@
 const API_URL = '/api';
 
+// --- AUTH CHECK ---
+const token = localStorage.getItem('token');
+const userRole = localStorage.getItem('role');
+const username = localStorage.getItem('username');
+const permissionsStr = localStorage.getItem('permissions') || '[]';
+let userPermissions = [];
+try { userPermissions = JSON.parse(permissionsStr); } catch(e) {}
+
+if (!token) {
+    window.location.href = 'login.html';
+}
+
+// Add user info to UI
+document.addEventListener('DOMContentLoaded', () => {
+    const profileImg = document.querySelector('.user-profile img');
+    if (profileImg) profileImg.alt = username;
+    
+    // Hide admin-only sections if user is not admin
+    if (userRole !== 'admin') {
+        document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
+        
+        // Hide unpermitted sections
+        document.querySelectorAll('.nav-item').forEach(item => {
+            const target = item.getAttribute('data-target');
+            if (target && !userPermissions.includes(target)) {
+                item.style.display = 'none';
+            }
+        });
+        
+        // Hide headers to keep the sidebar clean for standard users
+        document.querySelectorAll('.nav-menu h3').forEach(h3 => {
+            h3.style.display = 'none';
+        });
+
+        // Switch to the first available section if the default (dashboard) is hidden
+        setTimeout(() => {
+            const activeNav = document.querySelector('.nav-item.active');
+            if (activeNav && activeNav.style.display === 'none') {
+                const visibleNavs = Array.from(document.querySelectorAll('.nav-item')).filter(el => el.style.display !== 'none');
+                if(visibleNavs.length > 0) visibleNavs[0].click();
+            }
+        }, 100);
+    }
+
+    // Add logout button
+    const header = document.querySelector('header');
+    if (header) {
+        const logoutBtn = document.createElement('button');
+        logoutBtn.textContent = 'Logout';
+        logoutBtn.className = 'btn btn-secondary';
+        logoutBtn.style.marginLeft = '15px';
+        logoutBtn.style.padding = '8px 15px';
+        logoutBtn.style.fontSize = '12px';
+        logoutBtn.onclick = () => {
+            localStorage.clear();
+            window.location.href = 'login.html';
+        };
+        header.querySelector('.user-profile').appendChild(logoutBtn);
+    }
+});
+
+// --- Tab System Logic ---
+window.switchTab = function(showId, hideId, btnElement) {
+    document.getElementById(hideId).classList.remove('active');
+    document.getElementById(hideId).style.display = 'none';
+    
+    document.getElementById(showId).style.display = 'block';
+    // Small timeout to allow display:block to apply before animating opacity
+    setTimeout(() => {
+        document.getElementById(showId).classList.add('active');
+    }, 10);
+    
+    // Update active button state
+    const container = btnElement.closest('.tabs-container');
+    container.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    btnElement.classList.add('active');
+};
+
+// Global fetch interceptor
+const originalFetch = window.fetch;
+window.fetch = async function() {
+    let [resource, config] = arguments;
+    if (!config) config = {};
+    if (!config.headers) config.headers = {};
+    
+    // Don't override FormData headers (browser sets multipart/form-data boundary automatically)
+    if (!(config.body instanceof FormData)) {
+        config.headers['Content-Type'] = 'application/json';
+    }
+    
+    if (token) {
+        config.headers['Authorization'] = `Bearer ${token}`;
+    }
+    
+    const response = await originalFetch(resource, config);
+    if (response.status === 401 || response.status === 403) {
+        localStorage.clear();
+        window.location.href = 'login.html';
+    }
+    return response;
+};
+
 // Cache fetched data for easy editing
 let employeesData = [];
 let locationsData = [];
@@ -323,6 +425,10 @@ function editTask(id) {
     // Navigate to team task section
     const teamTaskNav = document.querySelector('.nav-item[data-target="team-task-section"]');
     if (teamTaskNav) teamTaskNav.click();
+
+    // Ensure the Action tab is open
+    const actionTabBtn = document.querySelector('#team-task-section .tab-btn[onclick*="task-action"]');
+    if (actionTabBtn) switchTab('task-action', 'task-history', actionTabBtn);
     
     document.getElementById('taskId').value = task.id;
     document.getElementById('taskDesc').value = task.task_desc;
@@ -677,7 +783,7 @@ const productFieldConfig = {
     "TJB": [ { id: "type", label: "Type", type: "select", opts: ["2F", "4F", "8F"] } ],
     "Fiber": [ { id: "type", label: "Type", type: "select", opts: ["2 Core", "4 Core"] }, { id: "Cable ID", label: "Cable ID", type: "text" } ],
     "MC": [ { id: "type", label: "Type", type: "select", opts: ["100M", "1G"] } ],
-    "ONU": [ { id: "ONU MAC", label: "ONU MAC", type: "text" } ],
+    "ONU": [ { id: "ONU_MAC", label: "ONU MAC", type: "text" } ],
     "Splitter": [ { id: "type", label: "Type", type: "select", opts: ["1x2", "1x4", "1x8", "1x16"] } ],
     "SFP": [ 
         { id: "type", label: "Speed Type", type: "select", opts: ["1G", "2G", "10G"] }, 
@@ -693,8 +799,10 @@ async function initInventory() {
         invProducts = await res.json();
         const recvSelect = document.getElementById('recvProduct');
         const invSelect = document.getElementById('invProduct');
+        const cuetSelect = document.getElementById('cuetProduct');
         if(recvSelect) recvSelect.innerHTML = '<option value="">Select Product...</option>' + invProducts.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
         if(invSelect) invSelect.innerHTML = '<option value="">Select Product...</option>' + invProducts.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+        if(cuetSelect) cuetSelect.innerHTML = '<option value="">Select Product...</option>' + invProducts.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
         
         const listDisplay = document.getElementById('productsListDisplay');
         if(listDisplay) {
@@ -710,6 +818,7 @@ async function initInventory() {
         fetchDashboard();
         fetchReceives();
         fetchInvests();
+        fetchCuets();
     } catch(e) {}
 }
 
@@ -787,11 +896,20 @@ window.handleProductFormChange = function(prefix) {
                 html += `<div class="form-group"><label>${f.label}</label><input type="${f.type}" id="${prefix}_dyn_${f.id}" required></div>`;
             }
         });
+        // Add scanner trigger button for ONU product
+        if(pName === 'ONU') {
+            html += `<div class="form-group grid-full" style="margin-top:5px;">
+                <button type="button" class="scanner-trigger-btn" onclick="openScannerOverlay('${prefix}')">
+                    📷 Scan ONU MAC (Camera)
+                </button>
+                <div id="${prefix}_scannedPreview" style="margin-top:10px;"></div>
+            </div>`;
+        }
         container.innerHTML = html;
     }
     
-    // Check stock warning for invest
-    if(prefix === 'inv') checkStockWarning();
+    // Check stock warning for invest and cuet
+    if(prefix === 'inv' || prefix === 'cuet') checkStockWarning(prefix);
 }
 
 function getFormDynData(prefix, pName) {
@@ -807,9 +925,13 @@ function getFormDynData(prefix, pName) {
     return { variant: variant || 'Standard', extra };
 }
 
+let movementChartInstance = null;
+let stockPieChartInstance = null;
+
 async function fetchDashboard() {
     try {
-        const res = await fetch(`${API_URL}/inventory/dashboard`);
+        const monthFilter = document.getElementById('dashboardMonthFilter') ? document.getElementById('dashboardMonthFilter').value : '';
+        const res = await fetch(`${API_URL}/inventory/dashboard${monthFilter ? '?month='+monthFilter : ''}`);
         if(!res.ok) return;
         const data = await res.json();
         invStockMap = data.stockMap || [];
@@ -828,7 +950,72 @@ async function fetchDashboard() {
                 tbody.innerHTML += `<tr><td>${item.product_name}</td><td>${item.variant}</td><td style="color:var(--danger);font-weight:bold;">${item.stock}</td></tr>`;
             });
         }
+        
+        updateCharts(data.stockMap || []);
     } catch(e) {}
+}
+
+function updateCharts(stockMap) {
+    const ctxMovement = document.getElementById('movementChart');
+    const ctxStock = document.getElementById('stockPieChart');
+    if(!ctxMovement || !ctxStock) return;
+
+    const labels = stockMap.map(s => `${s.product_name} (${s.variant})`);
+    const receivedData = stockMap.map(s => s.received);
+    const investedData = stockMap.map(s => s.invested);
+    const currentStockData = stockMap.map(s => s.stock);
+
+    if (movementChartInstance) movementChartInstance.destroy();
+    movementChartInstance = new Chart(ctxMovement, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Received',
+                    data: receivedData,
+                    backgroundColor: 'rgba(16, 185, 129, 0.7)',
+                    borderColor: 'rgb(16, 185, 129)',
+                    borderWidth: 1
+                },
+                {
+                    label: 'Invested',
+                    data: investedData,
+                    backgroundColor: 'rgba(245, 158, 11, 0.7)',
+                    borderColor: 'rgb(245, 158, 11)',
+                    borderWidth: 1
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { y: { beginAtZero: true } }
+        }
+    });
+
+    if (stockPieChartInstance) stockPieChartInstance.destroy();
+    stockPieChartInstance = new Chart(ctxStock, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: currentStockData,
+                backgroundColor: [
+                    '#6c5ce7', '#a29bfe', '#00cec9', '#81ecec',
+                    '#00b894', '#55efc4', '#e17055', '#fab1a0',
+                    '#d63031', '#ff7675', '#e84393', '#fd79a8'
+                ]
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'right', labels: { boxWidth: 12, font: { size: 10 } } }
+            }
+        }
+    });
 }
 
 async function fetchReceives() {
@@ -881,6 +1068,31 @@ window.delReceive = function(id) {
 window.delInvest = function(id) {
     if(!confirm("Delete this invest record?")) return;
     fetch(`${API_URL}/inventory/invest/${id}`, { method: 'DELETE' }).then(() => { fetchInvests(); fetchDashboard(); loadReportData(); });
+}
+window.delCuet = function(id) {
+    if(!confirm("Delete this CUET transfer record?")) return;
+    fetch(`${API_URL}/inventory/sent-cuet/${id}`, { method: 'DELETE' }).then(() => { fetchCuets(); fetchDashboard(); loadReportData(); });
+}
+
+async function fetchCuets() {
+    try {
+        const res = await fetch(`${API_URL}/inventory/sent-cuet`);
+        if(!res.ok) return;
+        const data = await res.json();
+        const tbody = document.querySelector('#cuetsTable tbody');
+        if(!tbody) return;
+        tbody.innerHTML = '';
+        data.slice(0,25).forEach(r => {
+            const exc = Object.keys(JSON.parse(r.extra_fields||'{}')).map(k => `${k}:${JSON.parse(r.extra_fields)[k]}`).join(', ');
+            tbody.innerHTML += `<tr>
+                <td>${r.date}</td>
+                <td>${r.product_name}</td>
+                <td>${r.quantity} ${r.variant} ${exc?`(${exc})`:''}</td>
+                <td>${r.notes}</td>
+                <td><button class="btn danger-btn" onclick="delCuet(${r.id})">Delete</button></td>
+            </tr>`;
+        });
+    } catch(e){}
 }
 
 const recvForm = document.getElementById('receiveForm');
@@ -942,12 +1154,48 @@ if(investForm) {
     });
     
     // Bind qty change dynamically
-    document.getElementById('invQty').addEventListener('input', checkStockWarning);
+    document.getElementById('invQty').addEventListener('input', () => checkStockWarning('inv'));
 }
 
-function checkStockWarning() {
-    const pId = document.getElementById('invProduct').value;
-    const sel = document.getElementById('invProduct');
+const cuetForm = document.getElementById('cuetForm');
+if(cuetForm) {
+    cuetForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const pId = document.getElementById('cuetProduct').value;
+        const pName = document.getElementById('cuetProduct').options[document.getElementById('cuetProduct').selectedIndex].text;
+        const qty = parseInt(document.getElementById('cuetQty').value);
+        const date = document.getElementById('cuetDate').value;
+        const notes = document.getElementById('cuetNotes').value;
+        const dyn = getFormDynData('cuet', pName);
+        
+        // Stock Check
+        const stockItem = invStockMap.find(s => s.product_id == pId && s.variant == dyn.variant);
+        const avail = stockItem ? stockItem.stock : 0;
+        
+        if(qty > avail) {
+            showToast(`Error: Insufficient stock. Available: ${avail}`);
+            return;
+        }
+
+        await fetch(`${API_URL}/inventory/sent-cuet`, {
+            method: 'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ product_id: pId, variant: dyn.variant, quantity: qty, notes, extra_fields: dyn.extra, date })
+        });
+        showToast("Product sent to CUET!");
+        cuetForm.reset();
+        handleProductFormChange('cuet');
+        fetchCuets();
+        fetchDashboard();
+        loadReportData();
+    });
+    
+    // Bind qty change dynamically
+    document.getElementById('cuetQty').addEventListener('input', () => checkStockWarning('cuet'));
+}
+
+function checkStockWarning(prefix = 'inv') {
+    const pId = document.getElementById(`${prefix}Product`).value;
+    const sel = document.getElementById(`${prefix}Product`);
     const pName = pId ? sel.options[sel.selectedIndex].text : '';
     const w = document.getElementById('stockWarning');
     if(!pId) { w.style.display = 'none'; return; }
@@ -955,14 +1203,14 @@ function checkStockWarning() {
     // Get current dyn
     let dynVariant = '';
     if(productFieldConfig[pName]) {
-        const typeEl = document.getElementById(`inv_dyn_type`);
+        const typeEl = document.getElementById(`${prefix}_dyn_type`);
         if(typeEl) dynVariant = typeEl.value;
     }
     const variant = dynVariant || 'Standard';
     const stockItem = invStockMap.find(s => s.product_id == pId && s.variant == variant);
     const avail = stockItem ? stockItem.stock : 0;
     
-    const reqQty = parseInt(document.getElementById('invQty').value) || 0;
+    const reqQty = parseInt(document.getElementById(`${prefix}Qty`).value) || 0;
     if(reqQty > avail) {
         w.style.display = 'block';
         w.textContent = `Warning: Insufficient stock! Only ${avail} available for ${pName} (${variant}).`;
@@ -971,7 +1219,10 @@ function checkStockWarning() {
     }
 }
 if(document.getElementById('invDynamicFields')) {
-    document.getElementById('invDynamicFields').addEventListener('change', checkStockWarning);
+    document.getElementById('invDynamicFields').addEventListener('change', () => checkStockWarning('inv'));
+}
+if(document.getElementById('cuetDynamicFields')) {
+    document.getElementById('cuetDynamicFields').addEventListener('change', () => checkStockWarning('cuet'));
 }
 
 window.loadReportData = async function() {
@@ -1090,3 +1341,373 @@ window.exportExcelReport = async function() {
 }
 
 initInventory();
+
+// --- User Management Logic ---
+let usersData = [];
+
+async function fetchUsers() {
+    if (userRole !== 'admin') return;
+    try {
+        const res = await fetch(`${API_URL}/auth/users`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error("Failed to fetch users");
+        usersData = await res.json();
+        renderUsers();
+    } catch(e) {}
+}
+
+function renderUsers() {
+    const tbody = document.querySelector('#usersTable tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    
+    usersData.forEach(user => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${user.username}</td>
+            <td>${user.user_id}</td>
+            <td>${user.role}</td>
+            <td>
+                <button class="btn btn-secondary" onclick="editUser(${user.id})" style="padding: 4px 8px; font-size:12px; margin-right: 5px;">Edit</button>
+                <button class="btn danger-btn" onclick="deleteUser(${user.id})" style="padding: 4px 8px; font-size:12px;">Delete</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+const userForm = document.getElementById('userForm');
+if (userForm) {
+    userForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = document.getElementById('manageUserId').value;
+        const username = document.getElementById('manageUserName').value;
+        const user_id = document.getElementById('manageUserIdField').value;
+        const password = document.getElementById('manageUserPassword').value;
+        
+        const checkboxes = document.querySelectorAll('#permissionsCheckboxes input[type="checkbox"]');
+        const permissions = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+
+        const method = id ? 'PUT' : 'POST';
+        const url = id ? `${API_URL}/auth/users/${id}` : `${API_URL}/auth/users`;
+        
+        const payload = { username, user_id, permissions, role: 'user' };
+        if (password) payload.password = password;
+
+        try {
+            const res = await fetch(url, {
+                method,
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                showToast(id ? 'User Updated Successfully' : 'User Added Successfully');
+                cancelUserEdit();
+                fetchUsers();
+            } else {
+                const data = await res.json();
+                showToast(`Error: ${data.error || 'Failed to save user'}`);
+            }
+        } catch(e) { handleError(); }
+    });
+}
+
+window.editUser = function(id) {
+    const user = usersData.find(u => u.id === id);
+    if (!user) return;
+    
+    document.getElementById('manageUserId').value = user.id;
+    document.getElementById('manageUserName').value = user.username;
+    document.getElementById('manageUserIdField').value = user.user_id;
+    document.getElementById('manageUserPassword').value = '';
+    
+    document.querySelectorAll('#permissionsCheckboxes input[type="checkbox"]').forEach(cb => cb.checked = false);
+    
+    let perms = [];
+    try { perms = JSON.parse(user.permissions || '[]'); } catch(e) {}
+    perms.forEach(p => {
+        const cb = document.querySelector(`#permissionsCheckboxes input[value="${p}"]`);
+        if (cb) cb.checked = true;
+    });
+
+    document.getElementById('userSubmitBtn').textContent = "Update User";
+    document.getElementById('userCancelBtn').style.display = "inline-block";
+    window.scrollTo(0, 0);
+};
+
+window.cancelUserEdit = function() {
+    if (userForm) userForm.reset();
+    document.getElementById('manageUserId').value = '';
+    document.querySelectorAll('#permissionsCheckboxes input[type="checkbox"]').forEach(cb => cb.checked = false);
+    if (document.getElementById('userSubmitBtn')) document.getElementById('userSubmitBtn').textContent = "Save User";
+    if (document.getElementById('userCancelBtn')) document.getElementById('userCancelBtn').style.display = "none";
+};
+
+if (document.getElementById('userCancelBtn')) {
+    document.getElementById('userCancelBtn').addEventListener('click', cancelUserEdit);
+}
+
+window.deleteUser = async function(id) {
+    if (!confirm("Are you sure you want to delete this user?")) return;
+    try {
+        const res = await fetch(`${API_URL}/auth/users/${id}`, { 
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+            fetchUsers();
+            showToast("User deleted!");
+        } else {
+            const data = await res.json();
+            showToast(`Error: ${data.error || 'Failed to delete user'}`);
+        }
+    } catch(e) { handleError(); }
+};
+
+if (userRole === 'admin') fetchUsers();
+
+// ============================
+// --- ONU MAC SCANNER ENGINE ---
+// ============================
+let scannerInstance = null;
+let scannedMacs = [];
+let activeScannerPrefix = null; // 'recv' or 'inv'
+let lastScanTime = 0;
+
+// MAC address validation: 12 hex chars (with or without separators)
+function extractMAC(rawText) {
+    if (!rawText) return null;
+    // Remove whitespace
+    let cleaned = rawText.trim();
+    
+    // Try to find MAC pattern in the text (handles QR codes with extra data)
+    // Pattern: 12 hex chars possibly separated by : or - or .
+    const macPatterns = [
+        /(?:MAC[:\s]*)?([0-9A-Fa-f]{2}[:\-\.][0-9A-Fa-f]{2}[:\-\.][0-9A-Fa-f]{2}[:\-\.][0-9A-Fa-f]{2}[:\-\.][0-9A-Fa-f]{2}[:\-\.][0-9A-Fa-f]{2})/i,
+        /(?:MAC[:\s]*)?([0-9A-Fa-f]{12})/i,
+        /(?:MAC[:\s]*)?([0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4})/i
+    ];
+    
+    for (const pattern of macPatterns) {
+        const match = cleaned.match(pattern);
+        if (match) {
+            // Normalize: remove separators and uppercase
+            return match[1].replace(/[:\-\.]/g, '').toUpperCase();
+        }
+    }
+    return null;
+}
+
+function formatMAC(raw) {
+    // Format as XX:XX:XX:XX:XX:XX
+    if (!raw || raw.length !== 12) return raw;
+    return raw.match(/.{2}/g).join(':');
+}
+
+function flashScanner(type) {
+    const flash = document.getElementById('scannerFlash');
+    if (!flash) return;
+    flash.className = 'scanner-flash ' + type;
+    setTimeout(() => { flash.className = 'scanner-flash'; }, 300);
+}
+
+function updateScannerUI() {
+    const countEl = document.getElementById('scannerCount');
+    const listEl = document.getElementById('scannerMacList');
+    if (countEl) countEl.textContent = scannedMacs.length;
+    if (listEl) {
+        listEl.innerHTML = scannedMacs.map((mac, i) => `
+            <tr>
+                <td>${i + 1}</td>
+                <td style="font-family:monospace;font-weight:600;letter-spacing:1px;">${formatMAC(mac)}</td>
+                <td><button class="mac-remove-btn" onclick="removeScannedMac(${i})">✕</button></td>
+            </tr>
+        `).join('');
+        // Auto-scroll to bottom
+        const wrapper = listEl.closest('.scanner-list-wrapper');
+        if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
+    }
+}
+
+window.removeScannedMac = function(index) {
+    scannedMacs.splice(index, 1);
+    updateScannerUI();
+};
+
+window.clearScannedMacs = function() {
+    scannedMacs = [];
+    updateScannerUI();
+};
+
+window.openScannerOverlay = function(prefix) {
+    activeScannerPrefix = prefix;
+    scannedMacs = [];
+    updateScannerUI();
+    
+    const overlay = document.getElementById('scannerOverlay');
+    overlay.style.display = 'flex';
+    
+    const statusEl = document.getElementById('scannerStatus');
+    statusEl.textContent = 'Initializing camera...';
+    statusEl.className = 'scanner-status';
+    
+    // Initialize html5-qrcode scanner
+    setTimeout(() => {
+        startCameraScanner();
+    }, 300);
+};
+
+window.closeScannerOverlay = function() {
+    stopCameraScanner();
+    document.getElementById('scannerOverlay').style.display = 'none';
+};
+
+async function startCameraScanner() {
+    const camViewId = 'scannerCamView';
+    const statusEl = document.getElementById('scannerStatus');
+    
+    try {
+        if (scannerInstance) {
+            try { await scannerInstance.stop(); } catch(e) {}
+            scannerInstance.clear();
+            scannerInstance = null;
+        }
+        
+        scannerInstance = new Html5Qrcode(camViewId);
+        
+        const cameras = await Html5Qrcode.getCameras();
+        if (!cameras || cameras.length === 0) {
+            statusEl.textContent = '❌ No camera found. Please grant camera permission.';
+            return;
+        }
+        
+        // Prefer back camera for mobile scanning
+        let cameraId = cameras[0].id;
+        const backCam = cameras.find(c => c.label.toLowerCase().includes('back') || c.label.toLowerCase().includes('rear') || c.label.toLowerCase().includes('environment'));
+        if (backCam) cameraId = backCam.id;
+        
+        await scannerInstance.start(
+            cameraId,
+            {
+                fps: 15,
+                qrbox: { width: 280, height: 280 },
+                aspectRatio: 1.0,
+                disableFlip: false
+            },
+            onScanSuccess,
+            onScanFailure
+        );
+        
+        statusEl.textContent = '🟢 Camera active — Point at ONU QR code or barcode';
+        statusEl.className = 'scanner-status active';
+        
+    } catch(err) {
+        console.error('Scanner init error:', err);
+        statusEl.textContent = '❌ Camera error: ' + (err.message || err);
+        statusEl.className = 'scanner-status';
+    }
+}
+
+function onScanSuccess(decodedText, decodedResult) {
+    // Throttle: ignore scans within 800ms of each other
+    const now = Date.now();
+    if (now - lastScanTime < 800) return;
+    lastScanTime = now;
+    
+    const mac = extractMAC(decodedText);
+    
+    if (!mac || mac.length !== 12) {
+        // Invalid MAC
+        flashScanner('error');
+        const statusEl = document.getElementById('scannerStatus');
+        statusEl.textContent = `❌ Invalid data: "${decodedText.substring(0, 40)}" — Not a valid MAC`;
+        statusEl.className = 'scanner-status';
+        setTimeout(() => {
+            statusEl.textContent = '🟢 Camera active — Point at ONU QR code or barcode';
+            statusEl.className = 'scanner-status active';
+        }, 2000);
+        return;
+    }
+    
+    // Check duplicate
+    if (scannedMacs.includes(mac)) {
+        flashScanner('error');
+        const statusEl = document.getElementById('scannerStatus');
+        statusEl.textContent = `⚠️ Duplicate MAC: ${formatMAC(mac)} — Already scanned`;
+        statusEl.className = 'scanner-status';
+        setTimeout(() => {
+            statusEl.textContent = '🟢 Camera active — Point at ONU QR code or barcode';
+            statusEl.className = 'scanner-status active';
+        }, 2000);
+        // Play a small beep-like feedback via vibration if available
+        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+        return;
+    }
+    
+    // Success! Add the MAC
+    scannedMacs.push(mac);
+    flashScanner('success');
+    updateScannerUI();
+    
+    // Haptic feedback
+    if (navigator.vibrate) navigator.vibrate(100);
+    
+    const statusEl = document.getElementById('scannerStatus');
+    statusEl.textContent = `✅ Captured: ${formatMAC(mac)} — Total: ${scannedMacs.length}`;
+    statusEl.className = 'scanner-status active';
+}
+
+function onScanFailure(error) {
+    // Silent — continuous scanning, failures are normal between frames
+}
+
+async function stopCameraScanner() {
+    if (scannerInstance) {
+        try {
+            await scannerInstance.stop();
+            scannerInstance.clear();
+        } catch(e) {}
+        scannerInstance = null;
+    }
+}
+
+window.finishScanning = function() {
+    if (scannedMacs.length === 0) {
+        showToast('No MACs scanned yet!');
+        return;
+    }
+    
+    const prefix = activeScannerPrefix;
+    if (!prefix) return;
+    
+    // Populate the ONU MAC field with all scanned MACs joined
+    const macField = document.getElementById(`${prefix}_dyn_ONU_MAC`);
+    if (macField) {
+        macField.value = scannedMacs.map(m => formatMAC(m)).join(', ');
+    }
+    
+    // Auto-set the quantity field
+    const qtyField = document.getElementById(`${prefix}Qty`);
+    if (qtyField) {
+        qtyField.value = scannedMacs.length;
+    }
+    
+    // Show preview under the scanner button in the form
+    const previewEl = document.getElementById(`${prefix}_scannedPreview`);
+    if (previewEl) {
+        previewEl.innerHTML = `<div style="background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); border-radius:8px; padding:10px; font-size:13px; color:#10b981;">
+            ✅ <strong>${scannedMacs.length}</strong> ONU MAC(s) captured and applied to form.
+            <div style="margin-top:6px; font-family:monospace; font-size:11px; color:#94a3b8; max-height:80px; overflow-y:auto;">
+                ${scannedMacs.map(m => formatMAC(m)).join('<br>')}
+            </div>
+        </div>`;
+    }
+    
+    // Close overlay
+    closeScannerOverlay();
+    showToast(`${scannedMacs.length} ONU MAC(s) applied!`);
+};

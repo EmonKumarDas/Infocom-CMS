@@ -5,12 +5,49 @@ const fs = require('fs');
 const cors = require('cors');
 const ExcelJS = require('exceljs');
 const multer = require('multer');
+const crypto = require('crypto');
+const https = require('https');
+const { execSync } = require('child_process');
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 app.use(express.json());
 app.use(cors());
 app.use(express.static('public'));
+
+// Basic in-memory session store
+const sessions = {};
+
+// Auth Middleware
+const requireAuth = (req, res, next) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token || !sessions[token]) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    req.user = sessions[token];
+    next();
+};
+
+const requireAdmin = (req, res, next) => {
+    requireAuth(req, res, () => {
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Forbidden: Admin only' });
+        }
+        next();
+    });
+};
+
+function hashPassword(password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+    return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, storedHash) {
+    const [salt, key] = storedHash.split(':');
+    const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+    return key === hash;
+}
 
 const DB_PATH = path.join(__dirname, 'database.sqlite');
 const EXCEL_TEMPLATE_PATH = path.join(__dirname, 'Copy of 1-CT All Conveyance Bill.xlsx');
@@ -111,6 +148,31 @@ db.serialize(() => {
         FOREIGN KEY (product_id) REFERENCES inv_products(id)
     )`);
 
+    db.run(`CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        user_id TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT DEFAULT 'user',
+        permissions TEXT DEFAULT '[]'
+    )`);
+
+    // Add permissions column if it doesn't exist (for existing databases)
+    db.run(`ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT '[]'`, (err) => {
+        // Ignore error if column already exists
+    });
+
+    db.run(`CREATE TABLE IF NOT EXISTS inv_sent_cuet (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER,
+        variant TEXT,
+        quantity INTEGER,
+        notes TEXT,
+        extra_fields TEXT,
+        date TEXT,
+        FOREIGN KEY (product_id) REFERENCES inv_products(id)
+    )`);
+
     const initialProducts = ["Cable Tie", "Patch Cord", "TJB", "Fiber", "MC", "ONU", "Splitter", "SFP"];
     initialProducts.forEach(p => {
         db.run(`INSERT OR IGNORE INTO inv_products (name) VALUES (?)`, [p]);
@@ -118,6 +180,93 @@ db.serialize(() => {
 });
 
 // --- API ROUTES ---
+
+// --- AUTH ROUTES ---
+app.get('/api/auth/check', (req, res) => {
+    db.get(`SELECT COUNT(*) as count FROM users WHERE role = 'admin'`, [], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ initialized: row.count > 0 });
+    });
+});
+
+app.post('/api/auth/init', (req, res) => {
+    const { username, user_id, password } = req.body;
+    db.get(`SELECT COUNT(*) as count FROM users WHERE role = 'admin'`, [], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (row.count > 0) return res.status(400).json({ error: 'Admin already exists.' });
+        
+        const hashedPw = hashPassword(password);
+        db.run(`INSERT INTO users (username, user_id, password, role) VALUES (?, ?, ?, 'admin')`, 
+            [username, user_id, hashedPw], function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        });
+    });
+});
+
+app.post('/api/auth/login', (req, res) => {
+    const { user_id, password } = req.body;
+    db.get(`SELECT * FROM users WHERE user_id = ?`, [user_id], (err, user) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!user || !verifyPassword(password, user.password)) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        
+        const token = crypto.randomBytes(32).toString('hex');
+        sessions[token] = { id: user.id, username: user.username, role: user.role };
+        res.json({ token, role: user.role, username: user.username, permissions: user.permissions });
+    });
+});
+
+app.get('/api/auth/users', requireAdmin, (req, res) => {
+    db.all(`SELECT id, username, user_id, role, permissions FROM users`, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.post('/api/auth/users', requireAdmin, (req, res) => {
+    const { username, user_id, password, role, permissions } = req.body;
+    const hashedPw = hashPassword(password);
+    const perms = permissions ? JSON.stringify(permissions) : '[]';
+    db.run(`INSERT INTO users (username, user_id, password, role, permissions) VALUES (?, ?, ?, ?, ?)`, 
+        [username, user_id, hashedPw, role || 'user', perms], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ id: this.lastID, username, user_id, role: role || 'user', permissions: perms });
+    });
+});
+
+app.put('/api/auth/users/:id', requireAdmin, (req, res) => {
+    const { username, user_id, password, role, permissions } = req.body;
+    const perms = permissions ? JSON.stringify(permissions) : '[]';
+    
+    if (password) {
+        const hashedPw = hashPassword(password);
+        db.run(`UPDATE users SET username = ?, user_id = ?, password = ?, role = ?, permissions = ? WHERE id = ?`,
+            [username, user_id, hashedPw, role || 'user', perms, req.params.id], function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, updated: this.changes });
+        });
+    } else {
+        db.run(`UPDATE users SET username = ?, user_id = ?, role = ?, permissions = ? WHERE id = ?`,
+            [username, user_id, role || 'user', perms, req.params.id], function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, updated: this.changes });
+        });
+    }
+});
+
+app.delete('/api/auth/users/:id', requireAdmin, (req, res) => {
+    db.run(`DELETE FROM users WHERE id = ?`, req.params.id, function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ deleted: this.changes });
+    });
+});
+// Apply auth middleware to all other API routes
+app.use('/api', (req, res, next) => {
+    if (req.path.startsWith('/auth')) return next();
+    requireAuth(req, res, next);
+});
 
 // Employees
 app.get('/api/employees', (req, res) => {
@@ -319,11 +468,11 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                     const groupStartIdx = rowsToInsert.length;
                     totalAmount += task.amount * 4;
 
-                    // 10 columns: SL, Date, From, To, Mode_L, Mode_R, Purpose, Up/Down, Total, Team Members
-                    rowsToInsert.push([globalSL++, task.date, 'Office', task.loc, 'Rikshaw', '', task.desc, 'Up', task.amount, task.emps]);
-                    rowsToInsert.push([globalSL++, task.date, task.loc, 'Office', 'Rikshaw', '', task.desc, 'Down', task.amount, task.emps]);
-                    rowsToInsert.push([globalSL++, task.date, 'Office', task.loc, 'Rikshaw', '', task.desc, 'Up', task.amount, task.emps]);
-                    rowsToInsert.push([globalSL++, task.date, task.loc, 'Office', 'Rikshaw', '', task.desc, 'Down', task.amount, task.emps]);
+                    // 9 columns: SL, Date, From, To, Mode, Purpose, Up/Down, Total, Team Members
+                    rowsToInsert.push([globalSL++, task.date, 'Office', task.loc, 'Rikshaw', task.desc, 'Up', task.amount, task.emps]);
+                    rowsToInsert.push([globalSL++, task.date, task.loc, 'Office', 'Rikshaw', task.desc, 'Down', task.amount, task.emps]);
+                    rowsToInsert.push([globalSL++, task.date, 'Office', task.loc, 'Rikshaw', task.desc, 'Up', task.amount, task.emps]);
+                    rowsToInsert.push([globalSL++, task.date, task.loc, 'Office', 'Rikshaw', task.desc, 'Down', task.amount, task.emps]);
 
                     taskGroups.push({
                         startIdx: groupStartIdx,
@@ -335,10 +484,7 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                 });
 
                 if (rowsToInsert.length > 0) {
-                    sheet.spliceRows(insertRowPos, 0, ...rowsToInsert);
-                    const newRowsEnd = insertRowPos + rowsToInsert.length - 1;
-
-                    // Clear any pre-existing merged cells in the data area to avoid conflicts
+                    // Clear existing merges in template data area first
                     const existingMerges = Object.keys(sheet._merges || {});
                     existingMerges.forEach(mergeRef => {
                         try {
@@ -346,41 +492,36 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                             if (merge) {
                                 const mergeTop = merge.top || merge.model?.top;
                                 const mergeBottom = merge.bottom || merge.model?.bottom;
-                                if (mergeTop >= insertRowPos && mergeBottom <= newRowsEnd) {
+                                if (mergeTop >= insertRowPos) {
                                     sheet.unMergeCells(mergeRef);
                                 }
                             }
                         } catch(e) {}
                     });
 
-                    // Apply borders and alignment to all inserted rows (10 columns)
+                    sheet.spliceRows(insertRowPos, 0, ...rowsToInsert);
+                    const newRowsEnd = insertRowPos + rowsToInsert.length - 1;
+
+                    // Apply borders and alignment to all inserted rows (9 columns)
                     for (let r = insertRowPos; r <= newRowsEnd; r++) {
                         const row = sheet.getRow(r);
-                        for (let c = 1; c <= 10; c++) {
+                        for (let c = 1; c <= 9; c++) {
                             const cell = row.getCell(c);
                             cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
                             cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
                         }
                     }
 
-                    // --- Per-task merging: Mode of Transport (cols 5-6), Purpose (col 7) across 4 rows of each task ---
+                    // --- Per-task merging: Purpose (col 6) across 4 rows of each task ---
                     taskGroups.forEach(g => {
                         const startRow = insertRowPos + g.startIdx;
                         const endRow = insertRowPos + g.endIdx;
-                        
-                        // Merge Mode of transport cells horizontally (5 to 6) for each row
-                        for (let r = startRow; r <= endRow; r++) {
-                            try { sheet.unMergeCells(r, 5, r, 6); } catch(e) {}
-                            try { sheet.mergeCells(r, 5, r, 6); } catch(e) {}
-                        }
-
                         if (endRow > startRow) {
-                            try { sheet.unMergeCells(startRow, 7, endRow, 7); } catch(e) {}
-                            try { sheet.mergeCells(startRow, 7, endRow, 7); } catch(e) { console.error('Purpose merge error:', e.message); }
+                            try { sheet.mergeCells(startRow, 6, endRow, 6); } catch(e) { console.error('Purpose merge error:', e.message); }
                         }
                     });
 
-                    // --- Date (col 2) and Team Members (col 10) merging: merge all contiguous tasks with same date ---
+                    // --- Date (col 2) and Team Members (col 9) merging: merge all contiguous tasks with same date ---
                     let dateGroupStart = 0;
                     for (let i = 1; i <= taskGroups.length; i++) {
                         const prevDate = taskGroups[dateGroupStart].date;
@@ -391,11 +532,9 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                             const mergeEndRow = insertRowPos + taskGroups[i - 1].endIdx;
                             if (mergeEndRow > mergeStartRow) {
                                 // Merge Date column
-                                try { sheet.unMergeCells(mergeStartRow, 2, mergeEndRow, 2); } catch(e) {}
                                 try { sheet.mergeCells(mergeStartRow, 2, mergeEndRow, 2); } catch(e) { console.error('Date merge error:', e.message); }
                                 // Merge Team Members column
-                                try { sheet.unMergeCells(mergeStartRow, 10, mergeEndRow, 10); } catch(e) {}
-                                try { sheet.mergeCells(mergeStartRow, 10, mergeEndRow, 10); } catch(e) { console.error('Team merge error:', e.message); }
+                                try { sheet.mergeCells(mergeStartRow, 9, mergeEndRow, 9); } catch(e) { console.error('Team merge error:', e.message); }
                             }
                             dateGroupStart = i;
                         }
@@ -405,10 +544,10 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                 // Update Total sum and Taka in Words at the bottom
                 for (let r = insertRowPos; r <= sheet.rowCount; r++) {
                     const row = sheet.getRow(r);
-                    for (let c = 1; c <= 10; c++) {
+                    for (let c = 1; c <= 9; c++) {
                         const cellVal = String(row.getCell(c).value || '');
                         if (cellVal.trim() === 'Total') {
-                            const targetCol = (c === 8) ? 9 : (c + 1);
+                            const targetCol = (c === 7) ? 8 : (c + 1);
                             row.getCell(targetCol).value = totalAmount;
                             row.getCell(targetCol).font = { bold: true };
                         }
@@ -736,6 +875,65 @@ app.delete('/api/inventory/invest/:id', (req, res) => {
     });
 });
 
+app.get('/api/inventory/sent-cuet', (req, res) => {
+    db.all(`SELECT s.*, p.name as product_name FROM inv_sent_cuet s JOIN inv_products p ON s.product_id = p.id ORDER BY s.id DESC`, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.post('/api/inventory/sent-cuet', (req, res) => {
+    const { product_id, variant, quantity, notes, extra_fields, date } = req.body;
+    db.run(
+        `INSERT INTO inv_sent_cuet (product_id, variant, quantity, notes, extra_fields, date) VALUES (?, ?, ?, ?, ?, ?)`,
+        [product_id, variant, quantity, notes, JSON.stringify(extra_fields || {}), date],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ id: this.lastID, success: true });
+        }
+    );
+});
+
+app.delete('/api/inventory/sent-cuet/:id', (req, res) => {
+    db.run(`DELETE FROM inv_sent_cuet WHERE id = ?`, req.params.id, function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ deleted: this.changes });
+    });
+});
+
+app.get('/api/inventory/stock', (req, res) => {
+    const query = `
+        SELECT 
+            p.id as product_id,
+            p.name as product_name,
+            COALESCE(r.total_received, 0) as total_received,
+            COALESCE(i_ctg.total_invested_ctg, 0) as total_invested_ctg,
+            COALESCE(s.total_sent_cuet, 0) as total_sent_cuet,
+            COALESCE(i_cuet.total_invested_cuet, 0) as total_invested_cuet
+        FROM inv_products p
+        LEFT JOIN (SELECT product_id, SUM(quantity) as total_received FROM inv_receive GROUP BY product_id) r ON p.id = r.product_id
+        LEFT JOIN (SELECT product_id, SUM(quantity) as total_invested_ctg FROM inv_invest WHERE office = 'CTG' GROUP BY product_id) i_ctg ON p.id = i_ctg.product_id
+        LEFT JOIN (SELECT product_id, SUM(quantity) as total_sent_cuet FROM inv_sent_cuet GROUP BY product_id) s ON p.id = s.product_id
+        LEFT JOIN (SELECT product_id, SUM(quantity) as total_invested_cuet FROM inv_invest WHERE office = 'CUET' GROUP BY product_id) i_cuet ON p.id = i_cuet.product_id
+    `;
+    
+    db.all(query, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        const stockData = rows.map(row => {
+            const chittagong_stock = row.total_received - row.total_invested_ctg - row.total_sent_cuet;
+            const cuet_stock = row.total_sent_cuet - row.total_invested_cuet;
+            return {
+                ...row,
+                chittagong_stock,
+                cuet_stock
+            };
+        });
+        
+        res.json(stockData);
+    });
+});
+
 app.get('/api/inventory/dashboard', async (req, res) => {
     try {
         const monthFilter = req.query.month; // e.g. "2026-04"
@@ -875,7 +1073,72 @@ app.post('/api/export/inventory_report', upload.single('template'), async (req, 
 });
 
 const PORT = 3000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server started on http://localhost:${PORT}`);
-    console.log(`Network access enabled! Try connecting from phone using your IPv4 Address (e.g. http://192.168.1.174:3000)`);
+const HTTPS_PORT = 3443;
+const HOST = '0.0.0.0';
+
+// Auto-generate self-signed SSL cert if not present
+const keyPath = path.join(__dirname, 'server.key');
+const certPath = path.join(__dirname, 'server.cert');
+
+function ensureSSLCerts() {
+    if (fs.existsSync(keyPath) && fs.existsSync(certPath)) return true;
+    try {
+        execSync(`openssl req -x509 -newkey rsa:2048 -keyout "${keyPath}" -out "${certPath}" -days 365 -nodes -subj "/CN=InfocomCMS"`, { stdio: 'ignore' });
+        console.log('✅ Self-signed SSL certificate generated.');
+        return true;
+    } catch(e) {
+        console.log('⚠️  OpenSSL not found. Generating cert with Node.js crypto...');
+        try {
+            // Fallback: generate with Node.js built-in (requires Node 15+)
+            const { generateKeyPairSync, createSign, createCertificate } = require('crypto');
+            // Simple self-signed using forge-like approach not available natively
+            // Use a minimal approach: create via spawn
+            console.log('⚠️  Could not auto-generate SSL cert. Please run:');
+            console.log(`   openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.cert -days 365 -nodes -subj "/CN=InfocomCMS"`);
+            return false;
+        } catch(e2) {
+            return false;
+        }
+    }
+}
+
+// Start HTTP server
+app.listen(PORT, HOST, () => {
+    console.log(`\n🌐 HTTP  Server: http://localhost:${PORT}`);
+    const nets = require('os').networkInterfaces();
+    for (const name of Object.keys(nets)) {
+        for (const net of nets[name]) {
+            if (net.family === 'IPv4' && !net.internal) {
+                console.log(`   📱 Phone (HTTP): http://${net.address}:${PORT}`);
+            }
+        }
+    }
 });
+
+// Start HTTPS server for camera access on phones
+if (ensureSSLCerts()) {
+    try {
+        const sslOptions = {
+            key: fs.readFileSync(keyPath),
+            cert: fs.readFileSync(certPath)
+        };
+        https.createServer(sslOptions, app).listen(HTTPS_PORT, HOST, () => {
+            console.log(`\n🔒 HTTPS Server: https://localhost:${HTTPS_PORT}`);
+            const nets = require('os').networkInterfaces();
+            for (const name of Object.keys(nets)) {
+                for (const net of nets[name]) {
+                    if (net.family === 'IPv4' && !net.internal) {
+                        console.log(`   📱 Phone (HTTPS + Camera): https://${net.address}:${HTTPS_PORT}`);
+                    }
+                }
+            }
+            console.log('\n💡 On your phone, open the HTTPS URL above.');
+            console.log('   You will see a security warning — tap "Advanced" → "Proceed" to continue.\n');
+        });
+    } catch(e) {
+        console.log('⚠️  HTTPS server failed to start:', e.message);
+    }
+} else {
+    console.log('\n⚠️  HTTPS not available. Camera scanning will only work on localhost.');
+    console.log('   To enable phone camera scanning, install OpenSSL and restart.\n');
+}
