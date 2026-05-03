@@ -59,6 +59,22 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         header.querySelector('.user-profile').appendChild(logoutBtn);
     }
+
+    let sseSource = null;
+    function initSSE() {
+        if (!sseSource && token) {
+            sseSource = new EventSource('/api/realtime/dashboard');
+            sseSource.onmessage = (e) => {
+                if (e.data === 'update') {
+                    fetchDashboard();
+                    fetchReceives();
+                    fetchInvests();
+                    fetchCuets();
+                }
+            };
+        }
+    }
+    initSSE();
 });
 
 // --- Tab System Logic ---
@@ -936,13 +952,6 @@ async function fetchDashboard() {
         const data = await res.json();
         invStockMap = data.stockMap || [];
         
-        const elTotal = document.getElementById('dashTotalStock');
-        if(elTotal) elTotal.textContent = data.totalStockUnits;
-        const elRecv = document.getElementById('dashTotalRecv');
-        if(elRecv) elRecv.textContent = data.monthlyReceived;
-        const elInv = document.getElementById('dashTotalInv');
-        if(elInv) elInv.textContent = data.monthlyInvested;
-        
         const tbody = document.querySelector('#lowStockTable tbody');
         if(tbody) {
             tbody.innerHTML = '';
@@ -952,7 +961,24 @@ async function fetchDashboard() {
         }
         
         updateCharts(data.stockMap || []);
+        renderMatrixTable(data.stockMap || []);
     } catch(e) {}
+}
+
+function renderMatrixTable(stockMap) {
+    const tbody = document.querySelector('#inventoryMatrixTable tbody');
+    if(!tbody) return;
+    tbody.innerHTML = '';
+    stockMap.forEach(s => {
+        tbody.innerHTML += `<tr>
+            <td>${s.product_name}</td>
+            <td>${s.variant}</td>
+            <td>${s.received}</td>
+            <td>${s.chittagong_stock || 0}</td>
+            <td>${s.cuet_stock || 0}</td>
+            <td><strong>${s.stock}</strong></td>
+        </tr>`;
+    });
 }
 
 function updateCharts(stockMap) {
@@ -1102,13 +1128,14 @@ if(recvForm) {
         const pId = document.getElementById('recvProduct').value;
         const pName = document.getElementById('recvProduct').options[document.getElementById('recvProduct').selectedIndex].text;
         const qty = document.getElementById('recvQty').value;
+        const cost = document.getElementById('recvCost').value || 0;
         const date = document.getElementById('recvDate').value;
         const notes = document.getElementById('recvNotes').value;
         const dyn = getFormDynData('recv', pName);
         
         await fetch(`${API_URL}/inventory/receive`, {
             method: 'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ product_id: pId, variant: dyn.variant, quantity: qty, source_office:'Dhaka', notes, extra_fields: dyn.extra, date })
+            body: JSON.stringify({ product_id: pId, variant: dyn.variant, quantity: qty, source_office:'Dhaka', notes, extra_fields: dyn.extra, date, total_cost: cost })
         });
         showToast("Product received!");
         recvForm.reset();
@@ -1126,6 +1153,7 @@ if(investForm) {
         const pId = document.getElementById('invProduct').value;
         const pName = document.getElementById('invProduct').options[document.getElementById('invProduct').selectedIndex].text;
         const qty = parseInt(document.getElementById('invQty').value);
+        const cost = document.getElementById('invCost').value || 0;
         const date = document.getElementById('invDate').value;
         const office = document.getElementById('invOffice').value;
         const notes = document.getElementById('invNotes').value;
@@ -1143,7 +1171,7 @@ if(investForm) {
 
         await fetch(`${API_URL}/inventory/invest`, {
             method: 'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ product_id: pId, variant: dyn.variant, quantity: qty, office, notes, extra_fields: dyn.extra, date })
+            body: JSON.stringify({ product_id: pId, variant: dyn.variant, quantity: qty, office, notes, extra_fields: dyn.extra, date, total_cost: cost })
         });
         showToast("Product invested!");
         investForm.reset();

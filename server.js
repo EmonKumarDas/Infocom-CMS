@@ -15,6 +15,11 @@ app.use(express.json());
 app.use(cors());
 app.use(express.static('public'));
 
+let sseClients = [];
+const notifyClients = () => {
+    sseClients.forEach(client => client.res.write(`data: update\n\n`));
+};
+
 // Basic in-memory session store
 const sessions = {};
 
@@ -162,6 +167,9 @@ db.serialize(() => {
         // Ignore error if column already exists
     });
 
+    db.run(`ALTER TABLE inv_receive ADD COLUMN total_cost REAL DEFAULT 0`, (err) => {});
+    db.run(`ALTER TABLE inv_invest ADD COLUMN total_cost REAL DEFAULT 0`, (err) => {});
+
     db.run(`CREATE TABLE IF NOT EXISTS inv_sent_cuet (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_id INTEGER,
@@ -182,6 +190,16 @@ db.serialize(() => {
 // --- API ROUTES ---
 
 // --- AUTH ROUTES ---
+app.get('/api/realtime/dashboard', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    const client = { id: Date.now(), res };
+    sseClients.push(client);
+    req.on('close', () => { sseClients = sseClients.filter(c => c.id !== client.id); });
+});
+
 app.get('/api/auth/check', (req, res) => {
     db.get(`SELECT COUNT(*) as count FROM users WHERE role = 'admin'`, [], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
@@ -831,12 +849,13 @@ app.get('/api/inventory/receive', (req, res) => {
 });
 
 app.post('/api/inventory/receive', (req, res) => {
-    const { product_id, variant, quantity, source_office, notes, extra_fields, date } = req.body;
+    const { product_id, variant, quantity, source_office, notes, extra_fields, date, total_cost } = req.body;
     db.run(
-        `INSERT INTO inv_receive (product_id, variant, quantity, source_office, notes, extra_fields, date) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [product_id, variant, quantity, source_office || 'Dhaka', notes, JSON.stringify(extra_fields || {}), date],
+        `INSERT INTO inv_receive (product_id, variant, quantity, source_office, notes, extra_fields, date, total_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [product_id, variant, quantity, source_office || 'Dhaka', notes, JSON.stringify(extra_fields || {}), date, total_cost || 0],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
+            notifyClients();
             res.json({ id: this.lastID, success: true });
         }
     );
@@ -845,6 +864,7 @@ app.post('/api/inventory/receive', (req, res) => {
 app.delete('/api/inventory/receive/:id', (req, res) => {
     db.run(`DELETE FROM inv_receive WHERE id = ?`, req.params.id, function(err) {
         if (err) return res.status(500).json({ error: err.message });
+        notifyClients();
         res.json({ deleted: this.changes });
     });
 });
@@ -857,12 +877,13 @@ app.get('/api/inventory/invest', (req, res) => {
 });
 
 app.post('/api/inventory/invest', (req, res) => {
-    const { product_id, variant, quantity, office, notes, extra_fields, date } = req.body;
+    const { product_id, variant, quantity, office, notes, extra_fields, date, total_cost } = req.body;
     db.run(
-        `INSERT INTO inv_invest (product_id, variant, quantity, office, notes, extra_fields, date) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [product_id, variant, quantity, office, notes, JSON.stringify(extra_fields || {}), date],
+        `INSERT INTO inv_invest (product_id, variant, quantity, office, notes, extra_fields, date, total_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [product_id, variant, quantity, office, notes, JSON.stringify(extra_fields || {}), date, total_cost || 0],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
+            notifyClients();
             res.json({ id: this.lastID, success: true });
         }
     );
@@ -871,6 +892,7 @@ app.post('/api/inventory/invest', (req, res) => {
 app.delete('/api/inventory/invest/:id', (req, res) => {
     db.run(`DELETE FROM inv_invest WHERE id = ?`, req.params.id, function(err) {
         if (err) return res.status(500).json({ error: err.message });
+        notifyClients();
         res.json({ deleted: this.changes });
     });
 });
@@ -889,6 +911,7 @@ app.post('/api/inventory/sent-cuet', (req, res) => {
         [product_id, variant, quantity, notes, JSON.stringify(extra_fields || {}), date],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
+            notifyClients();
             res.json({ id: this.lastID, success: true });
         }
     );
@@ -897,6 +920,7 @@ app.post('/api/inventory/sent-cuet', (req, res) => {
 app.delete('/api/inventory/sent-cuet/:id', (req, res) => {
     db.run(`DELETE FROM inv_sent_cuet WHERE id = ?`, req.params.id, function(err) {
         if (err) return res.status(500).json({ error: err.message });
+        notifyClients();
         res.json({ deleted: this.changes });
     });
 });
@@ -940,13 +964,13 @@ app.get('/api/inventory/dashboard', async (req, res) => {
         const isMonthStr = monthFilter ? `${monthFilter}%` : '%';
         
         const receives = await new Promise((resolve, reject) => {
-            db.all(`SELECT product_id, variant, SUM(quantity) as total_qty FROM inv_receive GROUP BY product_id, variant`, [], (err, rows) => {
+            db.all(`SELECT product_id, variant, SUM(quantity) as total_qty, SUM(total_cost) as cost FROM inv_receive GROUP BY product_id, variant`, [], (err, rows) => {
                 if(err) reject(err); else resolve(rows);
             });
         });
 
         const invests = await new Promise((resolve, reject) => {
-            db.all(`SELECT product_id, variant, SUM(quantity) as total_qty FROM inv_invest GROUP BY product_id, variant`, [], (err, rows) => {
+            db.all(`SELECT product_id, variant, office, SUM(quantity) as total_qty, SUM(total_cost) as cost FROM inv_invest GROUP BY product_id, variant, office`, [], (err, rows) => {
                 if(err) reject(err); else resolve(rows);
             });
         });
@@ -961,6 +985,10 @@ app.get('/api/inventory/dashboard', async (req, res) => {
         products.forEach(p => prodMap[p.id] = p.name);
 
         let stockMap = {}; // { "prodId_variant": { prodName, variant, stock } }
+        let totalReceivedCost = 0;
+        let totalInvestedCost = 0;
+        let chittagongInvestments = {};
+        let cuetInvestments = {};
         
         receives.forEach(r => {
             const key = `${r.product_id}_${r.variant}`;
@@ -970,17 +998,53 @@ app.get('/api/inventory/dashboard', async (req, res) => {
                 variant: r.variant,
                 received: r.total_qty,
                 invested: 0,
-                stock: r.total_qty
+                stock: r.total_qty,
+                cost: r.cost || 0
             };
+            totalReceivedCost += (r.cost || 0);
         });
 
         invests.forEach(i => {
             const key = `${i.product_id}_${i.variant}`;
             if(!stockMap[key]) {
-                stockMap[key] = { product_id: i.product_id, product_name: prodMap[i.product_id], variant: i.variant, received: 0, invested: 0, stock: 0 };
+                stockMap[key] = { product_id: i.product_id, product_name: prodMap[i.product_id], variant: i.variant, received: 0, invested: 0, stock: 0, cost: 0 };
             }
             stockMap[key].invested += i.total_qty;
             stockMap[key].stock -= i.total_qty;
+            totalInvestedCost += (i.cost || 0);
+
+            // Track location investments for matrix
+            if (i.office === 'CTG') {
+                chittagongInvestments[key] = (chittagongInvestments[key] || 0) + i.total_qty;
+            } else if (i.office === 'CUET') {
+                cuetInvestments[key] = (cuetInvestments[key] || 0) + i.total_qty;
+            }
+        });
+
+        // Determine stock by location based on receives vs invests vs sent to cuet
+        const sentCuets = await new Promise((resolve, reject) => {
+            db.all(`SELECT product_id, variant, SUM(quantity) as total_qty FROM inv_sent_cuet GROUP BY product_id, variant`, [], (err, rows) => {
+                if(err) reject(err); else resolve(rows);
+            });
+        });
+
+        let cuetStockData = {};
+        sentCuets.forEach(s => {
+            const key = `${s.product_id}_${s.variant}`;
+            cuetStockData[key] = s.total_qty;
+        });
+
+        // Build matrix data
+        Object.keys(stockMap).forEach(key => {
+            const sentToCuet = cuetStockData[key] || 0;
+            const investedCtg = chittagongInvestments[key] || 0;
+            const investedCuet = cuetInvestments[key] || 0;
+
+            const ctg_stock = stockMap[key].received - investedCtg - sentToCuet;
+            const cuet_stock = sentToCuet - investedCuet;
+
+            stockMap[key].chittagong_stock = ctg_stock;
+            stockMap[key].cuet_stock = cuet_stock;
         });
 
         // Current Month Metrics
@@ -1001,6 +1065,8 @@ app.get('/api/inventory/dashboard', async (req, res) => {
         res.json({
             stockMap: Object.values(stockMap),
             totalStockUnits,
+            totalReceivedCost,
+            totalInvestedCost,
             monthlyReceived: monthlyRecv,
             monthlyInvested: monthlyInv,
             lowStockItems
