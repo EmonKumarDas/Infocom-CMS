@@ -233,11 +233,14 @@ async function fetchLocations() {
 
 let currentTaskMonthFilter = '';
 let currentTaskYearFilter = '2026';
+let currentTaskPage = 1;
+const TASKS_PER_PAGE = 10;
 
 const filterMonthElement = document.getElementById('filterMonth');
 if (filterMonthElement) {
     filterMonthElement.addEventListener('change', (e) => {
         currentTaskMonthFilter = e.target.value;
+        currentTaskPage = 1;
         renderTasks();
     });
 }
@@ -245,6 +248,7 @@ const filterYearElement = document.getElementById('filterYear');
 if (filterYearElement) {
     filterYearElement.addEventListener('change', (e) => {
         currentTaskYearFilter = e.target.value;
+        currentTaskPage = 1;
         renderTasks();
     });
 }
@@ -274,7 +278,20 @@ function renderTasks() {
         return true;
     });
 
-    filteredTasks.forEach(task => {
+    // Sort by Date ASC (Oldest to Newest)
+    filteredTasks.sort((a, b) => {
+        return new Date(a.date) - new Date(b.date);
+    });
+
+    // Pagination
+    const totalPages = Math.ceil(filteredTasks.length / TASKS_PER_PAGE);
+    if(currentTaskPage > totalPages) currentTaskPage = totalPages || 1;
+    
+    const startIndex = (currentTaskPage - 1) * TASKS_PER_PAGE;
+    const endIndex = startIndex + TASKS_PER_PAGE;
+    const paginatedTasks = filteredTasks.slice(startIndex, endIndex);
+
+    paginatedTasks.forEach(task => {
         const tr = document.createElement('tr');
         const statusBadge = task.is_completed ? '<span class="status-badge status-yes">Completed</span>' : '<span class="status-badge status-no">Pending</span>';
         const emps = task.employee_names ? task.employee_names.replace(/,/g, ', ') : 'None';
@@ -292,6 +309,28 @@ function renderTasks() {
         `;
         tbody.appendChild(tr);
     });
+
+    renderTaskPagination(totalPages);
+}
+
+function renderTaskPagination(totalPages) {
+    const paginationContainer = document.getElementById('tasksPagination');
+    if(!paginationContainer) return;
+    paginationContainer.innerHTML = '';
+    
+    if(totalPages <= 1) return;
+
+    for(let i = 1; i <= totalPages; i++) {
+        const btn = document.createElement('button');
+        btn.textContent = i;
+        btn.className = `btn ${i === currentTaskPage ? 'primary-btn' : 'btn-secondary'}`;
+        btn.style.padding = '4px 10px';
+        btn.onclick = () => {
+            currentTaskPage = i;
+            renderTasks();
+        };
+        paginationContainer.appendChild(btn);
+    }
 }
 
 async function deleteTask(id) {
@@ -713,6 +752,15 @@ if(clientCancelBtn) {
 window.editClient = function(id) {
     const client = clientsData.find(c => c.id === id);
     if(!client) return;
+
+    // Navigate to Our Clients section
+    const ourClientsNav = document.querySelector('.nav-item[data-target="our-clients-section"]');
+    if (ourClientsNav) ourClientsNav.click();
+
+    // Ensure the Action tab is open
+    const actionTabBtn = document.querySelector('#our-clients-section .tab-btn[onclick*="client-action"]');
+    if (actionTabBtn) switchTab('client-action', 'client-history', actionTabBtn);
+    
     document.getElementById('clientId').value = client.id;
     document.getElementById('clientName').value = client.client_name || '';
     document.getElementById('clientType').value = client.client_type || 'Dedicated';

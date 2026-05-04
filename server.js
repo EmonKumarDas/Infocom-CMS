@@ -486,11 +486,11 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                     const groupStartIdx = rowsToInsert.length;
                     totalAmount += task.amount * 4;
 
-                    // 9 columns: SL, Date, From, To, Mode, Purpose, Up/Down, Total, Team Members
-                    rowsToInsert.push([globalSL++, task.date, 'Office', task.loc, 'Rikshaw', task.desc, 'Up', task.amount, task.emps]);
-                    rowsToInsert.push([globalSL++, task.date, task.loc, 'Office', 'Rikshaw', task.desc, 'Down', task.amount, task.emps]);
-                    rowsToInsert.push([globalSL++, task.date, 'Office', task.loc, 'Rikshaw', task.desc, 'Up', task.amount, task.emps]);
-                    rowsToInsert.push([globalSL++, task.date, task.loc, 'Office', 'Rikshaw', task.desc, 'Down', task.amount, task.emps]);
+                    // 10 columns: SL, Date, From, To, Mode(Left), Mode(Right), Purpose, Up/Down, Total, Team Members
+                    rowsToInsert.push([globalSL++, task.date, 'Office', task.loc, 'Rikshaw', '', task.desc, 'Up', task.amount, task.emps]);
+                    rowsToInsert.push([globalSL++, task.date, task.loc, 'Office', 'Rikshaw', '', task.desc, 'Down', task.amount, task.emps]);
+                    rowsToInsert.push([globalSL++, task.date, 'Office', task.loc, 'Rikshaw', '', task.desc, 'Up', task.amount, task.emps]);
+                    rowsToInsert.push([globalSL++, task.date, task.loc, 'Office', 'Rikshaw', '', task.desc, 'Down', task.amount, task.emps]);
 
                     taskGroups.push({
                         startIdx: groupStartIdx,
@@ -520,22 +520,24 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                     sheet.spliceRows(insertRowPos, 0, ...rowsToInsert);
                     const newRowsEnd = insertRowPos + rowsToInsert.length - 1;
 
-                    // Apply borders and alignment to all inserted rows (9 columns)
+                    // Apply borders and alignment to all inserted rows (10 columns)
                     for (let r = insertRowPos; r <= newRowsEnd; r++) {
                         const row = sheet.getRow(r);
-                        for (let c = 1; c <= 9; c++) {
+                        for (let c = 1; c <= 10; c++) {
                             const cell = row.getCell(c);
                             cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
                             cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
                         }
+                        // Merge Col 5 and 6 for Mode of Transport to span correctly
+                        try { sheet.mergeCells(r, 5, r, 6); } catch(e) {}
                     }
 
-                    // --- Per-task merging: Purpose (col 6) across 4 rows of each task ---
+                    // --- Per-task merging: Purpose (col 7) across 4 rows of each task ---
                     taskGroups.forEach(g => {
                         const startRow = insertRowPos + g.startIdx;
                         const endRow = insertRowPos + g.endIdx;
                         if (endRow > startRow) {
-                            try { sheet.mergeCells(startRow, 6, endRow, 6); } catch(e) { console.error('Purpose merge error:', e.message); }
+                            try { sheet.mergeCells(startRow, 7, endRow, 7); } catch(e) { console.error('Purpose merge error:', e.message); }
                         }
                     });
 
@@ -552,7 +554,7 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                                 // Merge Date column
                                 try { sheet.mergeCells(mergeStartRow, 2, mergeEndRow, 2); } catch(e) { console.error('Date merge error:', e.message); }
                                 // Merge Team Members column
-                                try { sheet.mergeCells(mergeStartRow, 9, mergeEndRow, 9); } catch(e) { console.error('Team merge error:', e.message); }
+                                try { sheet.mergeCells(mergeStartRow, 10, mergeEndRow, 10); } catch(e) { console.error('Team merge error:', e.message); }
                             }
                             dateGroupStart = i;
                         }
@@ -562,10 +564,10 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                 // Update Total sum and Taka in Words at the bottom
                 for (let r = insertRowPos; r <= sheet.rowCount; r++) {
                     const row = sheet.getRow(r);
-                    for (let c = 1; c <= 9; c++) {
+                    for (let c = 1; c <= 10; c++) {
                         const cellVal = String(row.getCell(c).value || '');
                         if (cellVal.trim() === 'Total') {
-                            const targetCol = (c === 7) ? 8 : (c + 1);
+                            const targetCol = (c === 7 || c === 8) ? 9 : (c + 1);
                             row.getCell(targetCol).value = totalAmount;
                             row.getCell(targetCol).font = { bold: true };
                         }

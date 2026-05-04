@@ -517,6 +517,9 @@
                                     </tbody>
                                 </table>
                             </div>
+                            <div id="tasksPagination" class="pagination-controls" style="display: flex; justify-content: center; gap: 10px; margin-top: 15px;">
+                                <!-- pagination buttons here -->
+                            </div>
                         </div>
                     </div>
                 </section>
@@ -623,8 +626,14 @@
 
                 <!-- Our Clients Section -->
                 <section id="our-clients-section" class="app-section">
-                    <div class="card glass-card">
-                        <h3>Add New Client</h3>
+                    <div class="tabs-container">
+                        <button class="tab-btn active" onclick="switchTab('client-action', 'client-history', this)">Add New Client</button>
+                        <button class="tab-btn" onclick="switchTab('client-history', 'client-action', this)">Client Directory</button>
+                    </div>
+
+                    <div id="client-action" class="tab-content active">
+                        <div class="card glass-card">
+                            <h3>Add New Client</h3>
                         <form id="clientForm" class="grid-form">
                             <input type="hidden" id="clientId">
                             <div class="form-group grid-full">
@@ -761,8 +770,10 @@
                             </div>
                         </form>
                     </div>
+                    </div>
 
-                    <div class="card glass-card mt-20">
+                    <div id="client-history" class="tab-content">
+                    <div class="card glass-card">
                         <h3>Client Directory</h3>
                         <div class="table-responsive">
                             <table class="styled-table" id="clientsTable">
