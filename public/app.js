@@ -298,6 +298,7 @@ function renderTasks() {
         
         tr.innerHTML = `
             <td>${task.date}</td>
+            <td>${task.ticket_id || ''}</td>
             <td>${emps}</td>
             <td>${task.task_desc}</td>
             <td>${task.location_name || 'N/A'}</td>
@@ -402,6 +403,7 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
     const id = document.getElementById('taskId').value;
     
     const employee_ids = Array.from(document.getElementById('taskEmployees').selectedOptions).map(opt => parseInt(opt.value));
+    const ticket_id = document.getElementById('taskTicketId').value;
     const task_desc = document.getElementById('taskDesc').value;
     const location_id = parseInt(document.getElementById('taskLocation').value);
     const date = document.getElementById('taskDate').value;
@@ -417,7 +419,7 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
             method,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                task_desc, location_id, date, start_time, end_time, is_completed, employee_ids
+                task_desc, location_id, date, start_time, end_time, is_completed, employee_ids, ticket_id
             })
         });
         
@@ -486,6 +488,7 @@ function editTask(id) {
     if (actionTabBtn) switchTab('task-action', 'task-history', actionTabBtn);
     
     document.getElementById('taskId').value = task.id;
+    document.getElementById('taskTicketId').value = task.ticket_id || '';
     document.getElementById('taskDesc').value = task.task_desc;
     document.getElementById('taskLocation').value = task.location_id;
     document.getElementById('taskDate').value = task.date;
@@ -508,6 +511,7 @@ function editTask(id) {
 function cancelTaskEdit() {
     document.getElementById('taskForm').reset();
     document.getElementById('taskId').value = '';
+    document.getElementById('taskTicketId').value = '';
     document.getElementById('taskSubmitBtn').textContent = "Assign Task";
     document.getElementById('taskCancelBtn').style.display = "none";
 }

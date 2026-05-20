@@ -85,6 +85,10 @@ db.serialize(() => {
         FOREIGN KEY (location_id) REFERENCES locations(id)
     )`);
 
+    db.run(`ALTER TABLE tasks ADD COLUMN ticket_id TEXT`, (err) => {
+        // Ignore error if column already exists
+    });
+
     db.run(`CREATE TABLE IF NOT EXISTS task_employees (
         task_id INTEGER,
         employee_id INTEGER,
@@ -359,9 +363,9 @@ app.get('/api/tasks', (req, res) => {
     });
 });
 app.post('/api/tasks', (req, res) => {
-    const { task_desc, location_id, date, start_time, end_time, is_completed, employee_ids } = req.body;
-    db.run(`INSERT INTO tasks (task_desc, location_id, date, start_time, end_time, is_completed) VALUES (?, ?, ?, ?, ?, ?)`,
-        [task_desc, location_id, date, start_time, end_time, is_completed ? 1 : 0],
+    const { task_desc, location_id, date, start_time, end_time, is_completed, employee_ids, ticket_id } = req.body;
+    db.run(`INSERT INTO tasks (task_desc, location_id, date, start_time, end_time, is_completed, ticket_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [task_desc, location_id, date, start_time, end_time, is_completed ? 1 : 0, ticket_id],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
             const taskId = this.lastID;
@@ -379,10 +383,10 @@ app.post('/api/tasks', (req, res) => {
 });
 
 app.put('/api/tasks/:id', (req, res) => {
-    const { task_desc, location_id, date, start_time, end_time, is_completed, employee_ids } = req.body;
+    const { task_desc, location_id, date, start_time, end_time, is_completed, employee_ids, ticket_id } = req.body;
     const taskId = req.params.id;
-    db.run(`UPDATE tasks SET task_desc = ?, location_id = ?, date = ?, start_time = ?, end_time = ?, is_completed = ? WHERE id = ?`,
-        [task_desc, location_id, date, start_time, end_time, is_completed ? 1 : 0, taskId],
+    db.run(`UPDATE tasks SET task_desc = ?, location_id = ?, date = ?, start_time = ?, end_time = ?, is_completed = ?, ticket_id = ? WHERE id = ?`,
+        [task_desc, location_id, date, start_time, end_time, is_completed ? 1 : 0, ticket_id, taskId],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
             
@@ -413,6 +417,16 @@ app.delete('/api/tasks/:id', (req, res) => {
         });
     });
 });
+
+function formatDateToDDMMYYYY(dateStr) {
+    if (!dateStr || !dateStr.includes('-')) return dateStr;
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+        const [yyyy, mm, dd] = parts;
+        return `${dd}-${mm}-${yyyy}`;
+    }
+    return dateStr;
+}
 
 // Excel Export Conveyance
 app.post('/api/export/conveyance', upload.single('template'), async (req, res) => {
@@ -448,6 +462,18 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                 allTaskGroups.push({ date, loc, amount, desc, emps });
             });
 
+            // Compute global date range for Bill Period from all tasks
+            let billPeriodStr = '';
+            const allDates = allTaskGroups.map(t => t.date).filter(Boolean);
+            if (allDates.length > 0) {
+                allDates.sort();
+                billPeriodStr = `${formatDateToDDMMYYYY(allDates[0])} To ${formatDateToDDMMYYYY(allDates[allDates.length - 1])}`;
+            } else {
+                const [yyyy, mm] = month.split('-');
+                const lastDay = new Date(yyyy, mm, 0).getDate();
+                billPeriodStr = `01-${mm}-${yyyy} To ${lastDay}-${mm}-${yyyy}`;
+            }
+
             // Split into pages: max 20 SL per page (each task = 4 SL, so 5 tasks per page)
             const SL_PER_PAGE = 20;
             const TASKS_PER_PAGE = Math.floor(SL_PER_PAGE / 4); // 5
@@ -477,6 +503,19 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                 await workbook.xlsx.load(templateBuffer);
                 const sheet = workbook.getWorksheet(1);
 
+                // Set Bill Period cell dynamically using global date range
+                for (let r = 1; r <= 10; r++) {
+                    const row = sheet.getRow(r);
+                    for (let c = 1; c <= 10; c++) {
+                        const val = String(row.getCell(c).value || '');
+                        if (val.includes('Bill Period')) {
+                            row.getCell(c + 1).value = billPeriodStr;
+                            row.getCell(c + 1).font = { name: 'Calibri', size: 11, bold: true };
+                            break;
+                        }
+                    }
+                }
+
                 const insertRowPos = 10;
                 const rowsToInsert = [];
                 const taskGroups = [];
@@ -501,47 +540,82 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                     });
                 });
 
-                if (rowsToInsert.length > 0) {
-                    // Clear existing merges in template data area first
-                    const existingMerges = Object.keys(sheet._merges || {});
-                    existingMerges.forEach(mergeRef => {
-                        try {
-                            const merge = sheet._merges[mergeRef];
-                            if (merge) {
-                                const mergeTop = merge.top || merge.model?.top;
-                                const mergeBottom = merge.bottom || merge.model?.bottom;
-                                if (mergeTop >= insertRowPos) {
-                                    sheet.unMergeCells(mergeRef);
-                                }
+                const dataCount = rowsToInsert.length;
+
+                // 1. Extract footer rows and styles from original template (rows 10 to 16)
+                const footerTemplateRows = [];
+                const footerStartOriginal = 10;
+                const footerEndOriginal = 16;
+                for (let r = footerStartOriginal; r <= footerEndOriginal; r++) {
+                    const row = sheet.getRow(r);
+                    const rowData = {
+                        height: row.height,
+                        cells: []
+                    };
+                    for (let c = 1; c <= 10; c++) {
+                        const cell = row.getCell(c);
+                        rowData.cells.push({
+                            value: cell.value,
+                            style: {
+                                font: cell.font,
+                                fill: cell.fill,
+                                border: cell.border,
+                                alignment: cell.alignment,
+                                numFmt: cell.numFmt
                             }
-                        } catch(e) {}
-                    });
+                        });
+                    }
+                    footerTemplateRows.push(rowData);
+                }
 
+                // 2. Extract and remove original merges belonging to footer area (top >= 10)
+                const footerMerges = [];
+                const existingMerges = Object.keys(sheet._merges || {});
+                existingMerges.forEach(mergeRef => {
+                    const merge = sheet._merges[mergeRef];
+                    if (merge) {
+                        const top = merge.top || merge.model?.top;
+                        const bottom = merge.bottom || merge.model?.bottom;
+                        const left = merge.left || merge.model?.left;
+                        const right = merge.right || merge.model?.right;
+
+                        if (top >= footerStartOriginal) {
+                            footerMerges.push({
+                                topOffset: top - footerStartOriginal,
+                                bottomOffset: bottom - footerStartOriginal,
+                                left,
+                                right
+                            });
+                            sheet.unMergeCells(mergeRef);
+                        }
+                    }
+                });
+
+                if (dataCount > 0) {
                     sheet.spliceRows(insertRowPos, 0, ...rowsToInsert);
-                    const newRowsEnd = insertRowPos + rowsToInsert.length - 1;
+                    const newRowsEnd = insertRowPos + dataCount - 1;
 
-                    // Apply borders and alignment to all inserted rows (10 columns)
+                    // Apply borders and styling to inserted task rows
                     for (let r = insertRowPos; r <= newRowsEnd; r++) {
                         const row = sheet.getRow(r);
+                        row.height = 20;
                         for (let c = 1; c <= 10; c++) {
                             const cell = row.getCell(c);
                             cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
                             cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
                         }
-                        // Merge Col 5 and 6 for Mode of Transport to span correctly
                         try { sheet.mergeCells(r, 5, r, 6); } catch(e) {}
                     }
 
-                    // --- Per-task merging: Purpose (col 7) across 4 rows of each task ---
+                    // Merge task group cells (Purpose, Date, Team Members)
                     taskGroups.forEach(g => {
                         const startRow = insertRowPos + g.startIdx;
                         const endRow = insertRowPos + g.endIdx;
                         if (endRow > startRow) {
-                            try { sheet.mergeCells(startRow, 7, endRow, 7); } catch(e) { console.error('Purpose merge error:', e.message); }
+                            try { sheet.mergeCells(startRow, 7, endRow, 7); } catch(e) {}
                         }
                     });
 
-                    // --- Date (col 2) and Team Members (col 9) merging: merge all contiguous tasks with same date ---
                     let dateGroupStart = 0;
                     for (let i = 1; i <= taskGroups.length; i++) {
                         const prevDate = taskGroups[dateGroupStart].date;
@@ -551,31 +625,60 @@ app.post('/api/export/conveyance', upload.single('template'), async (req, res) =
                             const mergeStartRow = insertRowPos + taskGroups[dateGroupStart].startIdx;
                             const mergeEndRow = insertRowPos + taskGroups[i - 1].endIdx;
                             if (mergeEndRow > mergeStartRow) {
-                                // Merge Date column
-                                try { sheet.mergeCells(mergeStartRow, 2, mergeEndRow, 2); } catch(e) { console.error('Date merge error:', e.message); }
-                                // Merge Team Members column
-                                try { sheet.mergeCells(mergeStartRow, 10, mergeEndRow, 10); } catch(e) { console.error('Team merge error:', e.message); }
+                                try { sheet.mergeCells(mergeStartRow, 2, mergeEndRow, 2); } catch(e) {}
+                                try { sheet.mergeCells(mergeStartRow, 10, mergeEndRow, 10); } catch(e) {}
                             }
                             dateGroupStart = i;
                         }
                     }
                 }
 
-                // Update Total sum and Taka in Words at the bottom
-                for (let r = insertRowPos; r <= sheet.rowCount; r++) {
-                    const row = sheet.getRow(r);
-                    for (let c = 1; c <= 10; c++) {
-                        const cellVal = String(row.getCell(c).value || '');
-                        if (cellVal.trim() === 'Total') {
-                            const targetCol = (c === 7 || c === 8) ? 9 : (c + 1);
-                            row.getCell(targetCol).value = totalAmount;
-                            row.getCell(targetCol).font = { bold: true };
+                // 3. Reconstruct and write shifted footer rows at footerStartRow
+                const footerStartRow = insertRowPos + dataCount;
+                footerTemplateRows.forEach((rowData, idx) => {
+                    const rNum = footerStartRow + idx;
+                    const row = sheet.getRow(rNum);
+                    row.height = rowData.height;
+
+                    rowData.cells.forEach((cellData, cIdx) => {
+                        const colNum = cIdx + 1;
+                        const cell = row.getCell(colNum);
+                        
+                        // Set dynamic value or copy from template
+                        if (idx === 0) { // Total Row
+                            if (colNum === 1) cell.value = 'Total';
+                            else if (colNum === 9) cell.value = totalAmount;
+                            else cell.value = null;
+                        } else if (idx === 2) { // Taka Row
+                            if (colNum === 1 || colNum === 2) cell.value = 'Taka (In Word)';
+                            else if (colNum === 3) cell.value = numberToWords(totalAmount) + ' Taka Only.';
+                            else cell.value = null;
+                        } else {
+                            cell.value = cellData.value;
                         }
-                        if (cellVal.includes('Taka (In Word)')) {
-                            row.getCell(2).value = numberToWords(totalAmount) + ' Taka Only';
+
+                        // Copy style
+                        cell.font = cellData.style.font;
+                        cell.fill = cellData.style.fill;
+                        cell.border = cellData.style.border;
+                        cell.alignment = cellData.style.alignment;
+                        cell.numFmt = cellData.style.numFmt;
+
+                        // Explicitly make the Total row label and amount bold
+                        if (idx === 0 && (colNum === 1 || colNum === 9)) {
+                            cell.font = { name: 'Calibri', size: 11, bold: true };
                         }
-                    }
-                }
+                    });
+                });
+
+                // 4. Re-apply footer merges at the new shifted positions
+                footerMerges.forEach(m => {
+                    const top = footerStartRow + m.topOffset;
+                    const bottom = footerStartRow + m.bottomOffset;
+                    try {
+                        sheet.mergeCells(top, m.left, bottom, m.right);
+                    } catch(e) {}
+                });
 
                 const buffer = await workbook.xlsx.writeBuffer();
                 excelBuffers.push(buffer);
